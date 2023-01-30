@@ -931,6 +931,14 @@ impl From<&Term> for TermGraph {
                         e,
                         dup_ptr.dup_e_var_use_ptr(),
                     );
+                    let cont = recurse(var_binders, var_uses, cont_term);
+                    register_var_use(
+                        var_binders,
+                        var_uses,
+                        cont_term,
+                        cont,
+                        dup_ptr.dup_e_var_use_ptr(),
+                    );
                     let a = var_uses
                         .get(&(*a_str, a_scope))
                         .copied()
@@ -941,7 +949,6 @@ impl From<&Term> for TermGraph {
                         .unwrap_or(Tagged::new_unused_var());
                     assert!(a.tag() != Tag::UnusedVar || b.tag() != Tag::UnusedVar);
                     dup_ptr.maybe_write_dup(Dup { l: *l, a, b, e });
-                    let cont = recurse(var_binders, var_uses, cont_term);
                     cont
                 }
                 Term::Let(x, e1_term, e2_term) => {
@@ -1048,6 +1055,81 @@ mod test {
             assert_eq!(app.e2.tag(), Tag::UnboundVar);
             assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
             assert_eq!(lam.e, lam_ptr);
+        }
+    }
+
+    #[test]
+    fn test_app_sup_from_term() {
+        // term = (#0{x0 x1} y)
+        let term = Term::App(
+            Box::new(Term::Sup(
+                0,
+                Box::new(Term::Var("x0".into())),
+                Box::new(Term::Var("x1".into())),
+            )),
+            Box::new(Term::Var("y".into())),
+        );
+        let term_graph = TermGraph::from(&term);
+        assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+        unsafe {
+            let mut nodes = Vec::new();
+            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            assert_eq!(nodes.len(), 2);
+            assert_eq!(nodes[0].tag(), Tag::AppPtr);
+            assert_eq!(nodes[1].tag(), Tag::SupPtr);
+            let app_ptr = nodes[0];
+            let sup_ptr = nodes[1];
+            let app = app_ptr.read_app();
+            let sup = sup_ptr.read_sup();
+            assert_eq!(app.e1, sup_ptr);
+            assert_eq!(app.e2.tag(), Tag::UnboundVar);
+            assert_eq!(sup.l, 0);
+            assert_eq!(sup.e1.tag(), Tag::UnboundVar);
+            assert_eq!(sup.e2.tag(), Tag::UnboundVar);
+        }
+    }
+
+    #[test]
+    fn test_app_dup_app_sup_from_term() {
+        // term = ((let #0{v1 v2} = v0; #0{v1 v2}) v3)
+        let term = Term::App(
+            Box::new(Term::Dup(
+                0,
+                "v1".into(),
+                "v2".into(),
+                Box::new(Term::Var("v0".into())),
+                Box::new(Term::Sup(
+                    0,
+                    Box::new(Term::Var("v1".into())),
+                    Box::new(Term::Var("v2".into())),
+                )),
+            )),
+            Box::new(Term::Var("v3".into())),
+        );
+        let term_graph = TermGraph::from(&term);
+        assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+        unsafe {
+            let mut nodes = Vec::new();
+            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            assert_eq!(nodes.len(), 3);
+            assert_eq!(nodes[0].tag(), Tag::AppPtr);
+            assert_eq!(nodes[1].tag(), Tag::SupPtr);
+            assert_eq!(nodes[2].tag(), Tag::DupPtr);
+            let app_ptr = nodes[0];
+            let sup_ptr = nodes[1];
+            let dup_ptr = nodes[2];
+            let app = app_ptr.read_app();
+            let sup = sup_ptr.read_sup();
+            let dup = dup_ptr.read_dup();
+            assert_eq!(app.e1, sup_ptr);
+            assert_eq!(app.e2.tag(), Tag::UnboundVar);
+            assert_eq!(sup.l, 0);
+            assert_eq!(sup.e1, dup_ptr);
+            assert_eq!(sup.e2, dup_ptr);
+            assert_eq!(dup.l, 0);
+            assert_eq!(dup.a, sup_ptr.sup_e1_var_use_ptr());
+            assert_eq!(dup.b, sup_ptr.sup_e2_var_use_ptr());
+            assert_eq!(dup.e, Tagged::new_unbound_var());
         }
     }
 
