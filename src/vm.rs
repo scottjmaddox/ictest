@@ -1,5 +1,5 @@
 use rand::seq::SliceRandom;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem::{align_of, size_of};
 use std::{fmt, ptr};
 
@@ -1234,6 +1234,63 @@ mod test {
             assert_eq!(dup_v3_v4.a, sup_v3_v4_ptr.sup_e1_var_use_ptr());
             assert_eq!(dup_v3_v4.b, sup_v3_v4_ptr.sup_e2_var_use_ptr());
             assert_eq!(dup_v3_v4.e, Tagged::new_unbound_var());
+        }
+    }
+
+    #[test]
+    fn test_app_lam_dup_sup_lam() {
+        // term = ((λx let #0{x0 x1} = x; #0{x0 x1}) (λy. y))
+        let term = Term::App(
+            Box::new(Term::Lam(
+                "x".into(),
+                Box::new(Term::Dup(
+                    0,
+                    "x0".into(),
+                    "x1".into(),
+                    Box::new(Term::Var("x".into())),
+                    Box::new(Term::Sup(
+                        0,
+                        Box::new(Term::Var("x0".into())),
+                        Box::new(Term::Var("x1".into())),
+                    )),
+                )),
+            )),
+            Box::new(Term::Lam("y".into(), Box::new(Term::Var("y".into())))),
+        );
+        let term_graph = TermGraph::from(&term);
+        assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+        unsafe {
+            let mut nodes = Vec::new();
+            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            assert_eq!(nodes.len(), 5);
+            assert_eq!(nodes[0].tag(), Tag::AppPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::LamPtr);
+            assert_eq!(nodes[3].tag(), Tag::SupPtr);
+            assert_eq!(nodes[4].tag(), Tag::DupPtr);
+            let app_ptr = nodes[0];
+            let lam_x_ptr = nodes[1];
+            let lam_y_ptr = nodes[2];
+            let sup_ptr = nodes[3];
+            let dup_ptr = nodes[4];
+            let app = app_ptr.read_app();
+            let lam_x = lam_x_ptr.read_lam();
+            let lam_y = lam_y_ptr.read_lam();
+            let sup = sup_ptr.read_sup();
+            let dup = dup_ptr.read_dup();
+            assert_eq!(app.e1, lam_x_ptr);
+            assert_eq!(app.e2, lam_y_ptr);
+            assert_eq!(lam_x.x, dup_ptr.dup_e_var_use_ptr());
+            assert_eq!(lam_x.e, sup_ptr);
+            assert_eq!(lam_y.x, lam_y_ptr.lam_e_var_use_ptr());
+            assert_eq!(lam_y.e, lam_y_ptr);
+            assert_eq!(sup.l, 0);
+            assert_eq!(sup.e1, dup_ptr);
+            assert_eq!(sup.e2, dup_ptr);
+            assert_eq!(dup.l, 0);
+            assert_eq!(dup.a, sup_ptr.sup_e1_var_use_ptr());
+            assert_eq!(dup.b, sup_ptr.sup_e2_var_use_ptr());
+            assert_eq!(dup.e, lam_x_ptr);
         }
     }
 
