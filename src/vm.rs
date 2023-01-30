@@ -806,10 +806,12 @@ pub struct TermGraph(Tagged);
 
 impl Drop for TermGraph {
     fn drop(&mut self) {
+        let mut nodes = Vec::new();
         unsafe {
-            visit_nodes(self.0, |ptr| {
-                ptr.dealloc_any();
-            });
+            visit_nodes(self.0, |ptr| nodes.push(ptr));
+            for node in nodes {
+                node.dealloc_any();
+            }
         }
     }
 }
