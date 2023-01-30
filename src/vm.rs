@@ -1134,6 +1134,109 @@ mod test {
     }
 
     #[test]
+    fn test_dup_lam_dup_sup_from_term() {
+        // term = (let #0{v1 v2} = (λv0 v0); #0{v1 v2})
+        let term = Term::Dup(
+            0,
+            "v1".into(),
+            "v2".into(),
+            Box::new(Term::Lam(
+                "v0".into(),
+                Box::new(Term::Var("v0".into())),
+            )),
+            Box::new(Term::Sup(
+                0,
+                Box::new(Term::Var("v1".into())),
+                Box::new(Term::Var("v2".into())),
+            )),
+        );
+        let term_graph = TermGraph::from(&term);
+        assert_eq!(term_graph.0.tag(), Tag::SupPtr);
+        unsafe {
+            let mut nodes = Vec::new();
+            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            assert_eq!(nodes.len(), 3);
+            assert_eq!(nodes[0].tag(), Tag::SupPtr);
+            assert_eq!(nodes[1].tag(), Tag::DupPtr);
+            assert_eq!(nodes[2].tag(), Tag::LamPtr);
+            let sup_ptr = nodes[0];
+            let dup_ptr = nodes[1];
+            let lam_ptr = nodes[2];
+            let sup = sup_ptr.read_sup();
+            let dup = dup_ptr.read_dup();
+            let lam = lam_ptr.read_lam();
+            assert_eq!(sup.l, 0);
+            assert_eq!(sup.e1, dup_ptr);
+            assert_eq!(sup.e2, dup_ptr);
+            assert_eq!(dup.l, 0);
+            assert_eq!(dup.a, sup_ptr.sup_e1_var_use_ptr());
+            assert_eq!(dup.b, sup_ptr.sup_e2_var_use_ptr());
+            assert_eq!(dup.e, lam_ptr);
+            assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
+            assert_eq!(lam.e, lam_ptr);
+        }
+    }
+
+    #[test]
+    fn test_dup_dup_dup_sup_from_term() {
+        // term = (let #0{v1 v2} = (let #1{v3 v4} = v0; #1{v3 v4}); #0{v1 v2})
+        let term = Term::Dup(
+            0,
+            "v1".into(),
+            "v2".into(),
+            Box::new(Term::Dup(
+                1,
+                "v3".into(),
+                "v4".into(),
+                Box::new(Term::Var("v0".into())),
+                Box::new(Term::Sup(
+                    1,
+                    Box::new(Term::Var("v3".into())),
+                    Box::new(Term::Var("v4".into())),
+                )),
+            )),
+            Box::new(Term::Sup(
+                0,
+                Box::new(Term::Var("v1".into())),
+                Box::new(Term::Var("v2".into())),
+            )),
+        );
+        let term_graph = TermGraph::from(&term);
+        assert_eq!(term_graph.0.tag(), Tag::SupPtr);
+        unsafe {
+            let mut nodes = Vec::new();
+            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            assert_eq!(nodes.len(), 4);
+            assert_eq!(nodes[0].tag(), Tag::SupPtr);
+            assert_eq!(nodes[1].tag(), Tag::DupPtr);
+            assert_eq!(nodes[2].tag(), Tag::SupPtr);
+            assert_eq!(nodes[3].tag(), Tag::DupPtr);
+            let sup_v1_v2_ptr = nodes[0];
+            let dup_v1_v2_ptr = nodes[1];
+            let sup_v3_v4_ptr = nodes[2];
+            let dup_v3_v4_ptr2 = nodes[3];
+            let sup_v1_v2 = sup_v1_v2_ptr.read_sup();
+            let dup_v1_v2 = dup_v1_v2_ptr.read_dup();
+            let sup_v3_v4 = sup_v3_v4_ptr.read_sup();
+            let dup_v3_v4 = dup_v3_v4_ptr2.read_dup();
+            assert_eq!(sup_v1_v2.l, 0);
+            assert_eq!(sup_v1_v2.e1, dup_v1_v2_ptr);
+            assert_eq!(sup_v1_v2.e2, dup_v1_v2_ptr);
+            assert_eq!(dup_v1_v2.l, 0);
+            assert_eq!(dup_v1_v2.a, sup_v1_v2_ptr.sup_e1_var_use_ptr());
+            assert_eq!(dup_v1_v2.b, sup_v1_v2_ptr.sup_e2_var_use_ptr());
+            assert_eq!(dup_v1_v2.e, sup_v3_v4_ptr);
+            assert_eq!(sup_v3_v4.l, 1);
+            assert_eq!(sup_v3_v4.e1, dup_v3_v4_ptr2);
+            assert_eq!(sup_v3_v4.e2, dup_v3_v4_ptr2);
+            assert_eq!(dup_v3_v4.l, 1);
+            assert_eq!(dup_v3_v4.a, sup_v3_v4_ptr.sup_e1_var_use_ptr());
+            assert_eq!(dup_v3_v4.b, sup_v3_v4_ptr.sup_e2_var_use_ptr());
+            assert_eq!(dup_v3_v4.e, Tagged::new_unbound_var());
+        }
+    }
+
+    #[test]
     fn test_app_lam_var() {
         // term = ((λx. x) y)
         // normal = y
