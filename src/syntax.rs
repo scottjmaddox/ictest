@@ -1,9 +1,7 @@
 use crate::intern::IStr;
 use std::fmt;
 
-#[allow(non_camel_case_types)]
-pub type u28 = u32;
-pub type Label = u28;
+pub type Label = u64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Term {

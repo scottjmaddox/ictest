@@ -1,8 +1,12 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::mem::{align_of, size_of};
-use std::ptr;
+use std::{fmt, ptr};
+
+use crate::intern::IStr;
+use crate::syntax::Term;
 
 /// A tagged value or pointer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -189,6 +193,20 @@ impl Tagged {
     }
 
     #[inline(always)]
+    unsafe fn app_e1_var_use_ptr(self) -> Tagged {
+        if self.tag() == Tag::UnusedVar {
+            debug_assert_eq!(self.ptr(), ptr::null_mut());
+            Tagged::new_unused_var()
+        } else {
+            debug_assert_ne!(self.ptr(), ptr::null_mut());
+            debug_assert_eq!(self.tag(), Tag::AppPtr);
+            let app_raw_ptr = self.ptr() as *mut App;
+            let ptr = &mut (*app_raw_ptr).e1 as *mut _ as *mut ();
+            Tagged::new(ptr, Tag::VarUsePtr)
+        }
+    }
+
+    #[inline(always)]
     unsafe fn app_e2_var_use_ptr(self) -> Tagged {
         if self.tag() == Tag::UnusedVar {
             debug_assert_eq!(self.ptr(), ptr::null_mut());
@@ -231,6 +249,20 @@ impl Tagged {
     }
 
     #[inline(always)]
+    unsafe fn dup_e_var_use_ptr(self) -> Tagged {
+        if self.tag() == Tag::UnusedVar {
+            debug_assert_eq!(self.ptr(), ptr::null_mut());
+            Tagged::new_unused_var()
+        } else {
+            debug_assert_ne!(self.ptr(), ptr::null_mut());
+            debug_assert_eq!(self.tag(), Tag::DupPtr);
+            let dup_raw_ptr = self.ptr() as *mut Dup;
+            let ptr = &mut (*dup_raw_ptr).e as *mut _ as *mut ();
+            Tagged::new(ptr, Tag::VarUsePtr)
+        }
+    }
+
+    #[inline(always)]
     unsafe fn dealloc_lam(self) {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::LamPtr);
@@ -267,6 +299,17 @@ impl Tagged {
         let ptr = self.ptr() as *mut u8;
         unsafe {
             std::alloc::dealloc(ptr, std::alloc::Layout::new::<Dup>());
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn dealloc_any(self) {
+        match self.tag() {
+            Tag::LamPtr => self.dealloc_lam(),
+            Tag::AppPtr => self.dealloc_app(),
+            Tag::SupPtr => self.dealloc_sup(),
+            Tag::DupPtr => self.dealloc_dup(),
+            _ => panic!(),
         }
     }
 }
@@ -350,6 +393,7 @@ unsafe fn naive_random_order_reduce(root_ptr_ptr: *mut Tagged) {
         }
         // select a random redex
         let redex = redexes.choose(&mut rand::thread_rng()).copied().unwrap();
+        reduce_redex(redex);
     }
 }
 
@@ -441,6 +485,8 @@ unsafe fn app_lam_rule(app_ptr: Tagged, app: App, lam_ptr: Tagged) -> Tagged {
     app_ptr.dealloc_app();
     let lam = lam_ptr.read_lam();
     lam_ptr.dealloc_lam();
+    // TODO: we're deallocating this lambda without knowing if
+    // `lam.x` points to it...
 
     // x <- e2
     debug_assert_eq!(lam.x.read_var_use(), lam_ptr);
@@ -638,12 +684,263 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, dup: Dup, sup_ptr: Tagged) {
     }
 }
 
+unsafe fn visit_nodes<F: FnMut(Tagged)>(ptr: Tagged, mut f: F) {
+    let mut visited = HashSet::new();
+    let mut stack = vec![ptr];
+    while let Some(ptr) = stack.pop() {
+        if visited.contains(&ptr) {
+            continue;
+        }
+        visited.insert(ptr);
+        match ptr.tag() {
+            Tag::UnusedVar => {}
+            Tag::VarUsePtr => unreachable!(),
+            Tag::UnboundVar => {}
+            Tag::LamPtr => {
+                let lam = ptr.read_lam();
+                if lam.x.tag() == Tag::VarUsePtr {
+                    stack.push(lam.x.read_var_use());
+                }
+                stack.push(lam.e);
+                f(ptr);
+            }
+            Tag::AppPtr => {
+                let app = ptr.read_app();
+                stack.push(app.e1);
+                stack.push(app.e2);
+                f(ptr);
+            }
+            Tag::SupPtr => {
+                let sup = ptr.read_sup();
+                stack.push(sup.e1);
+                stack.push(sup.e2);
+                f(ptr);
+            }
+            Tag::DupPtr => {
+                let dup = ptr.read_dup();
+                if dup.a.tag() == Tag::VarUsePtr {
+                    stack.push(dup.a.read_var_use());
+                }
+                if dup.b.tag() == Tag::VarUsePtr {
+                    stack.push(dup.b.read_var_use());
+                }
+                stack.push(dup.e);
+                f(ptr);
+            }
+        }
+    }
+}
+
 /// An owned term graph.
 pub struct TermGraph(Tagged);
 
 impl Drop for TermGraph {
     fn drop(&mut self) {
-        todo!()
+        unsafe {
+            visit_nodes(self.0, |ptr| {
+                ptr.dealloc_any();
+            });
+        }
+    }
+}
+
+impl fmt::Debug for TermGraph {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut nodes = Vec::new();
+        unsafe {
+            visit_nodes(self.0, |ptr| nodes.push(ptr));
+            for ptr in nodes {
+                write!(f, "{:?} {:?} ", ptr.ptr(), ptr.tag())?;
+                match ptr.tag() {
+                    Tag::UnusedVar => {}
+                    Tag::VarUsePtr => {}
+                    Tag::UnboundVar => {}
+                    Tag::LamPtr => {
+                        let lam = ptr.read_lam();
+                        write!(f, "({:?} {:?}) ", lam.x.ptr(), lam.x.tag())?;
+                        write!(f, "({:?} {:?}) ", lam.e.ptr(), lam.e.tag())?;
+                    }
+                    Tag::AppPtr => {
+                        let app = ptr.read_app();
+                        write!(f, "({:?} {:?}) ", app.e1.ptr(), app.e1.tag())?;
+                        write!(f, "({:?} {:?}) ", app.e2.ptr(), app.e2.tag())?;
+                    }
+                    Tag::SupPtr => {
+                        let sup = ptr.read_sup();
+                        write!(f, "{:?} ", sup.l)?;
+                        write!(f, "({:?} {:?}) ", sup.e1.ptr(), sup.e1.tag())?;
+                        write!(f, "({:?} {:?}) ", sup.e2.ptr(), sup.e2.tag())?;
+                    }
+                    Tag::DupPtr => {
+                        let dup = ptr.read_dup();
+                        write!(f, "{:?} ", dup.l)?;
+                        write!(f, "({:?} {:?}) ", dup.a.ptr(), dup.a.tag())?;
+                        write!(f, "({:?} {:?}) ", dup.b.ptr(), dup.b.tag())?;
+                        write!(f, "({:?} {:?}) ", dup.e.ptr(), dup.e.tag())?;
+                    }
+                }
+                write!(f, "\n")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl From<&Term> for TermGraph {
+    fn from(term: &Term) -> Self {
+        unsafe fn recurse(
+            var_binders: &mut HashMap<IStr, Vec<Tagged>>,
+            var_uses: &mut HashMap<(IStr, usize), Tagged>,
+            term: &Term,
+        ) -> Tagged {
+            // TODO: count uses, and fail if not affine
+            match term {
+                Term::Var(name) => {
+                    if let Some(binders) = var_binders.get_mut(name) {
+                        let binder = binders.last().copied().unwrap();
+                        binder
+                    } else {
+                        Tagged::new_unbound_var()
+                    }
+                }
+                Term::Lam(x_str, e_term) => do_lam(var_binders, var_uses, *x_str, e_term),
+                Term::App(e1_term, e2_term) => {
+                    let app_ptr = App::alloc();
+                    let e1 = recurse(var_binders, var_uses, e1_term);
+                    register_var_use(
+                        var_binders,
+                        var_uses,
+                        e1_term,
+                        e1,
+                        app_ptr.app_e1_var_use_ptr(),
+                    );
+                    let e2 = recurse(var_binders, var_uses, e2_term);
+                    register_var_use(
+                        var_binders,
+                        var_uses,
+                        e2_term,
+                        e2,
+                        app_ptr.app_e2_var_use_ptr(),
+                    );
+                    app_ptr.maybe_write_app(App { e1, e2 });
+                    app_ptr
+                }
+                Term::Sup(l, e1_term, e2_term) => {
+                    let sup_ptr = Sup::alloc();
+                    let e1 = recurse(var_binders, var_uses, e1_term);
+                    register_var_use(
+                        var_binders,
+                        var_uses,
+                        e1_term,
+                        e1,
+                        sup_ptr.sup_e1_var_use_ptr(),
+                    );
+                    let e2 = recurse(var_binders, var_uses, e2_term);
+                    register_var_use(
+                        var_binders,
+                        var_uses,
+                        e2_term,
+                        e2,
+                        sup_ptr.sup_e2_var_use_ptr(),
+                    );
+                    sup_ptr.maybe_write_sup(Sup { l: *l, e1, e2 });
+                    sup_ptr
+                }
+                Term::Dup(l, a_str, b_str, e_term, cont_term) => {
+                    let dup_ptr = Dup::alloc();
+                    let a_scopes = var_binders.entry(*a_str).or_default();
+                    a_scopes.push(dup_ptr);
+                    let a_scope = a_scopes.len();
+                    let b_scopes = var_binders.entry(*b_str).or_default();
+                    b_scopes.push(dup_ptr);
+                    let b_scope = b_scopes.len();
+                    let e = recurse(var_binders, var_uses, e_term);
+                    register_var_use(
+                        var_binders,
+                        var_uses,
+                        e_term,
+                        e,
+                        dup_ptr.dup_e_var_use_ptr(),
+                    );
+                    let a = var_uses
+                        .get(&(*a_str, a_scope))
+                        .copied()
+                        .unwrap_or(Tagged::new_unused_var());
+                    let b = var_uses
+                        .get(&(*b_str, b_scope))
+                        .copied()
+                        .unwrap_or(Tagged::new_unused_var());
+                    assert!(a.tag() != Tag::UnusedVar || b.tag() != Tag::UnusedVar);
+                    dup_ptr.maybe_write_dup(Dup { l: *l, a, b, e });
+                    let cont = recurse(var_binders, var_uses, cont_term);
+                    cont
+                }
+                Term::Let(x, e1_term, e2_term) => {
+                    // let x = e1 in e2 => (λx e2) e1
+                    let app_ptr = App::alloc();
+                    let e1 = recurse(var_binders, var_uses, e1_term);
+                    register_var_use(
+                        var_binders,
+                        var_uses,
+                        e1_term,
+                        e1,
+                        app_ptr.app_e2_var_use_ptr(),
+                    );
+                    let lam_ptr = do_lam(var_binders, var_uses, *x, e2_term);
+                    app_ptr.maybe_write_app(App {
+                        e1: lam_ptr,
+                        e2: e1,
+                    });
+                    app_ptr
+                }
+            }
+        }
+        fn register_var_use(
+            var_binders: &mut HashMap<IStr, Vec<Tagged>>,
+            var_uses: &mut HashMap<(IStr, usize), Tagged>,
+            e_term: &Term,
+            e: Tagged,
+            var_use_ptr: Tagged,
+        ) {
+            if let Term::Var(v_str) = e_term {
+                if e.tag() != Tag::UnboundVar {
+                    let v_scope = var_binders.entry(*v_str).or_default().len();
+                    assert!(
+                        !var_uses.contains_key(&(*v_str, v_scope)),
+                        "non-affine usage"
+                    );
+                    var_uses.insert((*v_str, v_scope), var_use_ptr);
+                }
+            }
+        }
+        unsafe fn do_lam(
+            var_binders: &mut HashMap<IStr, Vec<Tagged>>,
+            var_uses: &mut HashMap<(IStr, usize), Tagged>,
+            x_str: IStr,
+            e_term: &Term,
+        ) -> Tagged {
+            let lam_ptr = Lam::alloc();
+            let x_scopes = var_binders.entry(x_str).or_default();
+            x_scopes.push(lam_ptr);
+            let x_scope = x_scopes.len();
+            let e = recurse(var_binders, var_uses, e_term);
+            register_var_use(
+                var_binders,
+                var_uses,
+                e_term,
+                e,
+                lam_ptr.lam_e_var_use_ptr(),
+            );
+            let x = var_uses
+                .get(&(x_str, x_scope))
+                .copied()
+                .unwrap_or(Tagged::new_unused_var());
+            lam_ptr.maybe_write_lam(Lam { x, e });
+            lam_ptr
+        }
+        let var_binders = &mut HashMap::new();
+        let var_uses = &mut HashMap::new();
+        unsafe { TermGraph(recurse(var_binders, var_uses, term)) }
     }
 }
 
@@ -651,6 +948,59 @@ impl TermGraph {
     pub fn naive_random_order_reduce(&mut self) {
         unsafe {
             naive_random_order_reduce(&mut self.0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use parse_int::parse;
+    use regex::Regex;
+
+    #[test]
+    fn test_app_lam_from_term() {
+        // term = ((λx. x) y)
+        let term = Term::App(
+            Box::new(Term::Lam("x".into(), Box::new(Term::Var("x".into())))),
+            Box::new(Term::Var("y".into())),
+        );
+        let term_graph = TermGraph::from(&term);
+        assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+        unsafe {
+            let mut nodes = Vec::new();
+            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            assert_eq!(nodes.len(), 2);
+            assert_eq!(nodes[0].tag(), Tag::AppPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            let app_ptr = nodes[0];
+            let lam_ptr = nodes[1];
+            let app = app_ptr.read_app();
+            let lam = lam_ptr.read_lam();
+            assert_eq!(app.e1, lam_ptr);
+            assert_eq!(app.e2.tag(), Tag::UnboundVar);
+            assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
+            assert_eq!(lam.e, lam_ptr);
+        }
+    }
+
+    #[test]
+    fn test_app_lam_var() {
+        // term = ((λx. x) y)
+        // normal = y
+        let term = Term::App(
+            Box::new(Term::Lam("x".into(), Box::new(Term::Var("x".into())))),
+            Box::new(Term::Var("y".into())),
+        );
+        let mut term_graph = TermGraph::from(&term);
+
+        term_graph.naive_random_order_reduce();
+
+        assert_eq!(term_graph.0.tag(), Tag::UnboundVar);
+        unsafe {
+            let mut nodes = Vec::new();
+            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            assert_eq!(nodes.len(), 0);
         }
     }
 }

@@ -103,10 +103,7 @@ fn num_here(state: parser::State) -> parser::Answer<String> {
 pub fn parse_label(state: parser::State) -> parser::Answer<Label> {
     let (state, _) = parser::consume("#", state)?;
     let (state, text) = num_here(state)?;
-    let num = text.parse::<u32>().map_err(|_| "label out of range")?;
-    if num & 0xFFFFFFF != num {
-        Err("label out of range")?
-    }
+    let num = text.parse::<u64>().map_err(|_| "label out of range")?;
     Ok((state, num))
 }
 
@@ -269,7 +266,7 @@ mod test {
     }
 
     fn arb_label() -> impl Strategy<Value = Label> {
-        prop::bits::u32::between(0, 28)
+        prop::num::u64::ANY
     }
 
     fn arb_term() -> impl Strategy<Value = Term> {
