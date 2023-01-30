@@ -755,8 +755,9 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
 
 unsafe fn visit_nodes<F: FnMut(Tagged)>(ptr: Tagged, mut f: F) {
     let mut visited = HashSet::new();
-    let mut stack = vec![ptr];
-    while let Some(ptr) = stack.pop() {
+    let mut queue = VecDeque::new();
+    queue.push_back(ptr);
+    while let Some(ptr) = queue.pop_front() {
         if visited.contains(&ptr) {
             continue;
         }
@@ -768,32 +769,32 @@ unsafe fn visit_nodes<F: FnMut(Tagged)>(ptr: Tagged, mut f: F) {
             Tag::LamPtr => {
                 let lam = ptr.read_lam();
                 if lam.x.tag() == Tag::VarUsePtr {
-                    stack.push(lam.x.read_var_use());
+                    queue.push_back(lam.x.read_var_use());
                 }
-                stack.push(lam.e);
+                queue.push_back(lam.e);
                 f(ptr);
             }
             Tag::AppPtr => {
                 let app = ptr.read_app();
-                stack.push(app.e1);
-                stack.push(app.e2);
+                queue.push_back(app.e1);
+                queue.push_back(app.e2);
                 f(ptr);
             }
             Tag::SupPtr => {
                 let sup = ptr.read_sup();
-                stack.push(sup.e1);
-                stack.push(sup.e2);
+                queue.push_back(sup.e1);
+                queue.push_back(sup.e2);
                 f(ptr);
             }
             Tag::DupPtr => {
                 let dup = ptr.read_dup();
                 if dup.a.tag() == Tag::VarUsePtr {
-                    stack.push(dup.a.read_var_use());
+                    queue.push_back(dup.a.read_var_use());
                 }
                 if dup.b.tag() == Tag::VarUsePtr {
-                    stack.push(dup.b.read_var_use());
+                    queue.push_back(dup.b.read_var_use());
                 }
-                stack.push(dup.e);
+                queue.push_back(dup.e);
                 f(ptr);
             }
         }
