@@ -1,6 +1,4 @@
 use rand::seq::SliceRandom;
-use rand::thread_rng;
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::mem::{align_of, size_of};
 use std::{fmt, ptr};
@@ -179,86 +177,150 @@ impl Tagged {
     }
 
     #[inline(always)]
+    unsafe fn lam_x_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::LamPtr);
+        let lam_raw_ptr = self.ptr() as *mut Lam;
+        &mut (*lam_raw_ptr).x as *mut Tagged
+    }
+
+    #[inline(always)]
+    unsafe fn lam_e_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::LamPtr);
+        let lam_raw_ptr = self.ptr() as *mut Lam;
+        &mut (*lam_raw_ptr).e as *mut Tagged
+    }
+
+    #[inline(always)]
+    unsafe fn app_e1_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::AppPtr);
+        let app_raw_ptr = self.ptr() as *mut App;
+        &mut (*app_raw_ptr).e1 as *mut Tagged
+    }
+
+    #[inline(always)]
+    unsafe fn app_e2_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::AppPtr);
+        let app_raw_ptr = self.ptr() as *mut App;
+        &mut (*app_raw_ptr).e2 as *mut Tagged
+    }
+
+    #[inline(always)]
+    unsafe fn sup_l_raw_ptr(self) -> *mut u64 {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::SupPtr);
+        let sup_raw_ptr = self.ptr() as *mut Sup;
+        &mut (*sup_raw_ptr).l as *mut u64
+    }
+
+    #[inline(always)]
+    unsafe fn sup_e1_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::SupPtr);
+        let sup_raw_ptr = self.ptr() as *mut Sup;
+        &mut (*sup_raw_ptr).e1 as *mut Tagged
+    }
+
+    #[inline(always)]
+    unsafe fn sup_e2_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::SupPtr);
+        let sup_raw_ptr = self.ptr() as *mut Sup;
+        &mut (*sup_raw_ptr).e2 as *mut Tagged
+    }
+
+    #[inline(always)]
+    unsafe fn dup_l_raw_ptr(self) -> *mut u64 {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        let dup_raw_ptr = self.ptr() as *mut Dup;
+        &mut (*dup_raw_ptr).l as *mut u64
+    }
+
+    #[inline(always)]
+    unsafe fn dup_a_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        let dup_raw_ptr = self.ptr() as *mut Dup;
+        &mut (*dup_raw_ptr).a as *mut Tagged
+    }
+
+    #[inline(always)]
+    unsafe fn dup_b_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        let dup_raw_ptr = self.ptr() as *mut Dup;
+        &mut (*dup_raw_ptr).b as *mut Tagged
+    }
+
+    #[inline(always)]
+    unsafe fn dup_e_raw_ptr(self) -> *mut Tagged {
+        debug_assert_ne!(self.ptr(), ptr::null_mut());
+        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        let dup_raw_ptr = self.ptr() as *mut Dup;
+        &mut (*dup_raw_ptr).e as *mut Tagged
+    }
+
+    #[inline(always)]
     unsafe fn lam_e_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
+        if self.tag() == Tag::UnboundVar {
             debug_assert_eq!(self.ptr(), ptr::null_mut());
             Tagged::new_unused_var()
         } else {
-            debug_assert_ne!(self.ptr(), ptr::null_mut());
-            debug_assert_eq!(self.tag(), Tag::LamPtr);
-            let lam_raw_ptr = self.ptr() as *mut Lam;
-            let ptr = &mut (*lam_raw_ptr).e as *mut _ as *mut ();
-            Tagged::new(ptr, Tag::VarUsePtr)
+            Tagged::new(self.lam_e_raw_ptr() as *mut (), Tag::VarUsePtr)
         }
     }
 
     #[inline(always)]
     unsafe fn app_e1_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
+        if self.tag() == Tag::UnboundVar {
             debug_assert_eq!(self.ptr(), ptr::null_mut());
             Tagged::new_unused_var()
         } else {
-            debug_assert_ne!(self.ptr(), ptr::null_mut());
-            debug_assert_eq!(self.tag(), Tag::AppPtr);
-            let app_raw_ptr = self.ptr() as *mut App;
-            let ptr = &mut (*app_raw_ptr).e1 as *mut _ as *mut ();
-            Tagged::new(ptr, Tag::VarUsePtr)
+            Tagged::new(self.app_e1_raw_ptr() as *mut (), Tag::VarUsePtr)
         }
     }
 
     #[inline(always)]
     unsafe fn app_e2_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
+        if self.tag() == Tag::UnboundVar {
             debug_assert_eq!(self.ptr(), ptr::null_mut());
             Tagged::new_unused_var()
         } else {
-            debug_assert_ne!(self.ptr(), ptr::null_mut());
-            debug_assert_eq!(self.tag(), Tag::AppPtr);
-            let app_raw_ptr = self.ptr() as *mut App;
-            let ptr = &mut (*app_raw_ptr).e2 as *mut _ as *mut ();
-            Tagged::new(ptr, Tag::VarUsePtr)
+            Tagged::new(self.app_e2_raw_ptr() as *mut (), Tag::VarUsePtr)
         }
     }
 
     #[inline(always)]
     unsafe fn sup_e1_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
+        if self.tag() == Tag::UnboundVar {
             debug_assert_eq!(self.ptr(), ptr::null_mut());
             Tagged::new_unused_var()
         } else {
-            debug_assert_ne!(self.ptr(), ptr::null_mut());
-            debug_assert_eq!(self.tag(), Tag::SupPtr);
-            let sup_raw_ptr = self.ptr() as *mut Sup;
-            let ptr = &mut (*sup_raw_ptr).e1 as *mut _ as *mut ();
-            Tagged::new(ptr, Tag::VarUsePtr)
+            Tagged::new(self.sup_e1_raw_ptr() as *mut (), Tag::VarUsePtr)
         }
     }
 
     #[inline(always)]
     unsafe fn sup_e2_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
+        if self.tag() == Tag::UnboundVar {
             debug_assert_eq!(self.ptr(), ptr::null_mut());
             Tagged::new_unused_var()
         } else {
-            debug_assert_ne!(self.ptr(), ptr::null_mut());
-            debug_assert_eq!(self.tag(), Tag::SupPtr);
-            let sup_raw_ptr = self.ptr() as *mut Sup;
-            let ptr = &mut (*sup_raw_ptr).e2 as *mut _ as *mut ();
-            Tagged::new(ptr, Tag::VarUsePtr)
+            Tagged::new(self.sup_e2_raw_ptr() as *mut (), Tag::VarUsePtr)
         }
     }
 
     #[inline(always)]
     unsafe fn dup_e_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
+        if self.tag() == Tag::UnboundVar {
             debug_assert_eq!(self.ptr(), ptr::null_mut());
             Tagged::new_unused_var()
         } else {
-            debug_assert_ne!(self.ptr(), ptr::null_mut());
-            debug_assert_eq!(self.tag(), Tag::DupPtr);
-            let dup_raw_ptr = self.ptr() as *mut Dup;
-            let ptr = &mut (*dup_raw_ptr).e as *mut _ as *mut ();
-            Tagged::new(ptr, Tag::VarUsePtr)
+            Tagged::new(self.dup_e_raw_ptr() as *mut (), Tag::VarUsePtr)
         }
     }
 
@@ -406,7 +468,7 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
             continue;
         }
         visited.insert(ptr_ptr);
-        let ptr = *ptr_ptr;
+        let ptr = ptr_ptr.read();
         match ptr.tag() {
             Tag::UnusedVar => {}
             Tag::VarUsePtr => {
@@ -450,25 +512,23 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
 }
 
 unsafe fn reduce_redex(ptr_ptr: *mut Tagged) {
-    let ptr = *ptr_ptr;
+    let ptr = ptr_ptr.read();
     match ptr.tag() {
         Tag::AppPtr => {
-            let app = ptr.read_app();
-            match app.e1.tag() {
-                Tag::LamPtr => {
-                    *ptr_ptr = app_lam_rule(ptr, app, app.e1);
-                }
-                Tag::SupPtr => {
-                    *ptr_ptr = app_sup_rule(ptr, app, app.e1);
-                }
+            let app_ptr = ptr;
+            let app_e1 = app_ptr.app_e1_raw_ptr().read();
+            match app_e1.tag() {
+                Tag::LamPtr => app_lam_rule(ptr_ptr, app_ptr, app_e1),
+                Tag::SupPtr => app_sup_rule(ptr_ptr, app_ptr, app_e1),
                 _ => unreachable!(),
             }
         }
         Tag::DupPtr => {
-            let dup = ptr.read_dup();
-            match dup.e.tag() {
-                Tag::LamPtr => dup_lam_rule(ptr, dup, dup.e),
-                Tag::SupPtr => dup_sup_rule(ptr, dup, dup.e),
+            let dup_ptr = ptr;
+            let dup_e = dup_ptr.dup_e_raw_ptr().read();
+            match dup_e.tag() {
+                Tag::LamPtr => dup_lam_rule(dup_ptr, dup_e),
+                Tag::SupPtr => dup_sup_rule(dup_ptr, dup_e),
                 _ => unreachable!(),
             }
         }
@@ -476,37 +536,35 @@ unsafe fn reduce_redex(ptr_ptr: *mut Tagged) {
     }
 }
 
-unsafe fn app_lam_rule(app_ptr: Tagged, app: App, lam_ptr: Tagged) -> Tagged {
+unsafe fn app_lam_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
     // (λx e) e2
     // ---------- AppLam
     // x <- e2
     // e
 
-    app_ptr.dealloc_app();
-    let lam = lam_ptr.read_lam();
-    lam_ptr.dealloc_lam();
-    // TODO: we're deallocating this lambda without knowing if
-    // `lam.x` points to it...
+    let lam_x = lam_ptr.lam_x_raw_ptr().read();
 
     // x <- e2
-    debug_assert_eq!(lam.x.read_var_use(), lam_ptr);
-    lam.x.maybe_write_var(app.e2);
+    debug_assert_eq!(lam_x.read_var_use(), lam_ptr);
+    lam_x.maybe_write_var(app_ptr.app_e2_raw_ptr().read());
     // e
-    lam.e
+    ptr_ptr.write(lam_ptr.lam_e_raw_ptr().read());
+
+    // deallocate unreachable nodes
+    app_ptr.dealloc_app();
+    lam_ptr.dealloc_lam();
 }
 
-unsafe fn app_sup_rule(app_ptr: Tagged, app: App, sup_ptr: Tagged) -> Tagged {
+unsafe fn app_sup_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
     // #l{e1 e2} e3
     // ----------------- AppSup
     // dup #l{a b} = e3
     // #l{(e1 a) (e2 b)}
 
-    let app_sup_e3 = app;
+    let app_sup_e3_ptr = app_ptr;
     let sup_e1_e2_ptr = sup_ptr;
 
-    app_ptr.dealloc_app();
-    let sup_e1_e2 = sup_e1_e2_ptr.read_sup();
-    sup_e1_e2_ptr.dealloc_sup();
+    let l = sup_e1_e2_ptr.sup_l_raw_ptr().read();
 
     let dup_a_b_ptr = Dup::alloc();
     let app_e1_a_ptr = App::alloc();
@@ -515,30 +573,34 @@ unsafe fn app_sup_rule(app_ptr: Tagged, app: App, sup_ptr: Tagged) -> Tagged {
 
     // dup #l{a b} = e3
     dup_a_b_ptr.maybe_write_dup(Dup {
-        l: sup_e1_e2.l,
+        l,
         a: app_e1_a_ptr.app_e2_var_use_ptr(),
         b: app_e2_b_ptr.app_e2_var_use_ptr(),
-        e: app_sup_e3.e2,
+        e: app_sup_e3_ptr.app_e2_raw_ptr().read(),
     });
 
     // #l{(e1 a) (e2 b)}
     app_e1_a_ptr.maybe_write_app(App {
-        e1: sup_e1_e2.e1,
+        e1: sup_e1_e2_ptr.sup_e1_raw_ptr().read(),
         e2: dup_a_b_ptr,
     });
     app_e2_b_ptr.maybe_write_app(App {
-        e1: sup_e1_e2.e2,
+        e1: sup_e1_e2_ptr.sup_e2_raw_ptr().read(),
         e2: dup_a_b_ptr,
     });
     sup_app_app_ptr.maybe_write_sup(Sup {
-        l: sup_e1_e2.l,
+        l,
         e1: app_e1_a_ptr,
         e2: app_e2_b_ptr,
     });
-    sup_app_app_ptr
+    ptr_ptr.write(sup_app_app_ptr);
+
+    // deallocate unreachable nodes
+    app_sup_e3_ptr.dealloc_app();
+    sup_e1_e2_ptr.dealloc_sup();
 }
 
-unsafe fn dup_lam_rule(dup_ptr: Tagged, dup: Dup, lam_ptr: Tagged) {
+unsafe fn dup_lam_rule(dup_ptr: Tagged, lam_ptr: Tagged) {
     // dup #l{a b} = (λx e)
     // ------------------ DupLam
     // a <- (λx1 c)
@@ -547,24 +609,24 @@ unsafe fn dup_lam_rule(dup_ptr: Tagged, dup: Dup, lam_ptr: Tagged) {
     // dup #l{c d} = e
 
     let dup_a_b_ptr = dup_ptr;
-    let dup_a_b = dup;
     let lam_x_e_ptr = lam_ptr;
 
-    dup_ptr.dealloc_dup();
-    let lam_x_e = lam_ptr.read_lam();
-    lam_ptr.dealloc_lam();
+    let l = dup_a_b_ptr.dup_l_raw_ptr().read();
+    let dup_a_b_a = dup_a_b_ptr.dup_a_raw_ptr().read();
+    let dup_a_b_b = dup_a_b_ptr.dup_b_raw_ptr().read();
+    let lam_x_e_x = lam_x_e_ptr.lam_x_raw_ptr().read();
 
-    let lam_x1_c_ptr = if dup_a_b.a.tag() == Tag::UnusedVar {
+    let lam_x1_c_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
         Tagged::new_unbound_var()
     } else {
         Lam::alloc()
     };
-    let lam_x2_d_ptr = if dup_a_b.b.tag() == Tag::UnusedVar {
+    let lam_x2_d_ptr = if dup_a_b_b.tag() == Tag::UnusedVar {
         Tagged::new_unbound_var()
     } else {
         Lam::alloc()
     };
-    let sup_x1_x2_ptr = if lam_x_e.x.tag() == Tag::UnusedVar {
+    let sup_x1_x2_ptr = if lam_x_e_x.tag() == Tag::UnusedVar {
         Tagged::new_unbound_var()
     } else {
         Sup::alloc()
@@ -572,40 +634,44 @@ unsafe fn dup_lam_rule(dup_ptr: Tagged, dup: Dup, lam_ptr: Tagged) {
     let dup_c_d_ptr = Dup::alloc();
 
     // a <- (λx1 c)
-    debug_assert_eq!(dup_a_b.a.read_var_use(), dup_a_b_ptr);
-    dup_a_b.a.maybe_write_var(lam_x1_c_ptr);
+    debug_assert_eq!(dup_a_b_a.read_var_use(), dup_a_b_ptr);
+    dup_a_b_a.maybe_write_var(lam_x1_c_ptr);
     lam_x1_c_ptr.maybe_write_lam(Lam {
         x: sup_x1_x2_ptr.sup_e1_var_use_ptr(),
         e: dup_c_d_ptr,
     });
 
     // b <- (λx2 d)
-    debug_assert_eq!(dup_a_b.b.read_var_use(), dup_a_b_ptr);
-    dup_a_b.b.maybe_write_var(lam_x2_d_ptr);
+    debug_assert_eq!(dup_a_b_b.read_var_use(), dup_a_b_ptr);
+    dup_a_b_b.maybe_write_var(lam_x2_d_ptr);
     lam_x2_d_ptr.maybe_write_lam(Lam {
         x: sup_x1_x2_ptr.sup_e2_var_use_ptr(),
         e: dup_c_d_ptr,
     });
 
     // x <- #l{x1,x2}
-    debug_assert_eq!(lam_x_e.x.read_var_use(), dup_a_b.e);
-    lam_x_e.x.maybe_write_var(sup_x1_x2_ptr);
+    debug_assert_eq!(lam_x_e_x.read_var_use(), dup_a_b_ptr.dup_e_raw_ptr().read());
+    lam_x_e_x.maybe_write_var(sup_x1_x2_ptr);
     sup_x1_x2_ptr.maybe_write_sup(Sup {
-        l: dup_a_b.l,
+        l,
         e1: lam_x1_c_ptr,
         e2: lam_x2_d_ptr,
     });
 
     // dup #l{c d} = e
     dup_c_d_ptr.maybe_write_dup(Dup {
-        l: dup_a_b.l,
+        l,
         a: lam_x1_c_ptr.lam_e_var_use_ptr(),
         b: lam_x2_d_ptr.lam_e_var_use_ptr(),
-        e: lam_x_e.e,
+        e: lam_x_e_ptr.lam_e_raw_ptr().read(),
     });
+
+    // deallocate unreachable nodes
+    dup_a_b_ptr.dealloc_dup();
+    lam_x_e_ptr.dealloc_lam();
 }
 
-unsafe fn dup_sup_rule(dup_ptr: Tagged, dup: Dup, sup_ptr: Tagged) {
+unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
     // dup #l{a b} = #l{e1 e2}
     // --------------------- DupSupSame
     // a <- e1
@@ -619,30 +685,29 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, dup: Dup, sup_ptr: Tagged) {
     // dup #l{a2 b2} = e2
 
     let dup_a_b_ptr = dup_ptr;
-    let dup_a_b = dup;
     let sup_e1_e2_ptr = sup_ptr;
 
-    dup_ptr.dealloc_dup();
-    let sup_e1_e2 = sup_e1_e2_ptr.read_sup();
-    sup_e1_e2_ptr.dealloc_sup();
+    let l = dup_a_b_ptr.dup_l_raw_ptr().read();
+    let m = sup_e1_e2_ptr.sup_l_raw_ptr().read();
+    let dup_a_b_a = dup_a_b_ptr.dup_a_raw_ptr().read();
+    let dup_a_b_b = dup_a_b_ptr.dup_b_raw_ptr().read();
 
-    if dup_a_b.l == sup_e1_e2.l {
+    // let sup_e1_e2 = sup_e1_e2_ptr.read_sup();
+
+    if l == m {
         // a <- e1
-        debug_assert_eq!(dup_a_b.a.read_var_use(), dup_a_b_ptr);
-        dup_a_b.a.maybe_write_var(sup_e1_e2.e1);
+        debug_assert_eq!(dup_a_b_a.read_var_use(), dup_a_b_ptr);
+        dup_a_b_a.maybe_write_var(sup_e1_e2_ptr.sup_e1_raw_ptr().read());
         // b <- e2
-        debug_assert_eq!(dup_a_b.a.read_var_use(), dup_a_b_ptr);
-        dup_a_b.b.maybe_write_var(sup_e1_e2.e2);
+        debug_assert_eq!(dup_a_b_b.read_var_use(), dup_a_b_ptr);
+        dup_a_b_b.maybe_write_var(sup_e1_e2_ptr.sup_e2_raw_ptr().read());
     } else {
-        let l = dup_a_b.l;
-        let m = sup_e1_e2.l;
-
-        let sup_a1_a2_ptr = if dup_a_b.a.tag() == Tag::UnusedVar {
+        let sup_a1_a2_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
             Tagged::new_unbound_var()
         } else {
             Sup::alloc()
         };
-        let sup_b1_b2_ptr = if dup_a_b.b.tag() == Tag::UnusedVar {
+        let sup_b1_b2_ptr = if dup_a_b_b.tag() == Tag::UnusedVar {
             Tagged::new_unbound_var()
         } else {
             Sup::alloc()
@@ -651,8 +716,8 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, dup: Dup, sup_ptr: Tagged) {
         let dup_a2_b2_ptr = Dup::alloc();
 
         // a <- #m{a1 a2}
-        debug_assert_eq!(dup_a_b.a.read_var_use(), dup_a_b_ptr);
-        dup_a_b.a.maybe_write_var(sup_a1_a2_ptr);
+        debug_assert_eq!(dup_a_b_a.read_var_use(), dup_a_b_ptr);
+        dup_a_b_a.maybe_write_var(sup_a1_a2_ptr);
         sup_a1_a2_ptr.maybe_write_sup(Sup {
             l: m,
             e1: dup_a1_b1_ptr,
@@ -660,8 +725,8 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, dup: Dup, sup_ptr: Tagged) {
         });
 
         // b <- #m{b1 b2}
-        debug_assert_eq!(dup_a_b.a.read_var_use(), dup_a_b_ptr);
-        dup_a_b.b.maybe_write_var(sup_b1_b2_ptr);
+        debug_assert_eq!(dup_a_b_b.read_var_use(), dup_a_b_ptr);
+        dup_a_b_b.maybe_write_var(sup_b1_b2_ptr);
         sup_b1_b2_ptr.maybe_write_sup(Sup {
             l: m,
             e1: dup_a1_b1_ptr,
@@ -672,16 +737,20 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, dup: Dup, sup_ptr: Tagged) {
             l,
             a: sup_a1_a2_ptr.sup_e1_var_use_ptr(),
             b: sup_b1_b2_ptr.sup_e1_var_use_ptr(),
-            e: sup_e1_e2.e1,
+            e: sup_e1_e2_ptr.sup_e1_raw_ptr().read(),
         });
         // dup #l{a2 b2} = e2
         dup_a2_b2_ptr.maybe_write_dup(Dup {
             l,
             a: sup_a1_a2_ptr.sup_e2_var_use_ptr(),
             b: sup_b1_b2_ptr.sup_e2_var_use_ptr(),
-            e: sup_e1_e2.e2,
+            e: sup_e1_e2_ptr.sup_e2_raw_ptr().read(),
         });
     }
+
+    // deallocate unreachable nodes
+    dup_a_b_ptr.dealloc_dup();
+    sup_e1_e2_ptr.dealloc_sup();
 }
 
 unsafe fn visit_nodes<F: FnMut(Tagged)>(ptr: Tagged, mut f: F) {
@@ -955,8 +1024,6 @@ impl TermGraph {
 #[cfg(test)]
 mod test {
     use super::*;
-    use parse_int::parse;
-    use regex::Regex;
 
     #[test]
     fn test_app_lam_from_term() {
