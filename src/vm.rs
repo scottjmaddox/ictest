@@ -2,6 +2,7 @@ use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem::{align_of, size_of};
 use std::{fmt, ptr};
+use std::ptr::addr_of_mut;
 
 use crate::intern::IStr;
 use crate::syntax::Term;
@@ -13,8 +14,6 @@ struct Lam {
     x: Tagged,
     e: Tagged,
 }
-const LAM_X_OFFSET: isize = 0;
-const LAM_E_OFFSET: isize = 8;
 
 /// An application node, e.g. `(e1 e2)`.
 #[derive(Debug, Clone, Copy)]
@@ -23,8 +22,6 @@ struct App {
     e1: Tagged,
     e2: Tagged,
 }
-const APP_E1_OFFSET: isize = 0;
-const APP_E2_OFFSET: isize = 8;
 
 /// A superposition node, e.g. `#l{e1 e2}`.
 #[derive(Debug, Clone, Copy)]
@@ -34,9 +31,6 @@ struct Sup {
     e1: Tagged,
     e2: Tagged,
 }
-const SUP_L_OFFSET: isize = 0;
-const SUP_E1_OFFSET: isize = 8;
-const SUP_E2_OFFSET: isize = 16;
 
 /// A duplication node, e.g. `dup #l{a b} = e;`
 #[derive(Debug, Clone, Copy)]
@@ -47,10 +41,6 @@ struct Dup {
     b: Tagged,
     e: Tagged,
 }
-const DUP_L_OFFSET: isize = 0;
-const DUP_A_OFFSET: isize = 8;
-const DUP_B_OFFSET: isize = 16;
-const DUP_E_OFFSET: isize = 24;
 
 impl Lam {
     #[inline(always)]
@@ -92,12 +82,12 @@ trait LamPtrExt {
 impl LamPtrExt for *mut Lam {
     #[inline(always)]
     fn x(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(LAM_X_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).x) }
     }
 
     #[inline(always)]
     fn e(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(LAM_E_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).e) }
     }
 }
 
@@ -109,12 +99,12 @@ trait AppPtrExt {
 impl AppPtrExt for *mut App {
     #[inline(always)]
     fn e1(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(APP_E1_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).e1) }
     }
 
     #[inline(always)]
     fn e2(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(APP_E2_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).e2) }
     }
 }
 
@@ -127,17 +117,17 @@ trait SupPtrExt {
 impl SupPtrExt for *mut Sup {
     #[inline(always)]
     fn l(self) -> *mut u64 {
-        unsafe { (self as *mut u8).offset(SUP_L_OFFSET) as *mut u64 }
+        unsafe { addr_of_mut!((*self).l) }
     }
 
     #[inline(always)]
     fn e1(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(SUP_E1_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).e1) }
     }
 
     #[inline(always)]
     fn e2(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(SUP_E2_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).e2) }
     }
 }
 
@@ -151,22 +141,22 @@ trait DupPtrExt {
 impl DupPtrExt for *mut Dup {
     #[inline(always)]
     fn l(self) -> *mut u64 {
-        unsafe { (self as *mut u8).offset(DUP_L_OFFSET) as *mut u64 }
+        unsafe { addr_of_mut!((*self).l) }
     }
 
     #[inline(always)]
     fn a(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(DUP_A_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).a) }
     }
 
     #[inline(always)]
     fn b(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(DUP_B_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).b) }
     }
 
     #[inline(always)]
     fn e(self) -> *mut Tagged {
-        unsafe { (self as *mut u8).offset(DUP_E_OFFSET) as *mut Tagged }
+        unsafe { addr_of_mut!((*self).e) }
     }
 }
 
@@ -1083,7 +1073,7 @@ impl From<&Term> for TermGraph {
 impl TermGraph {
     pub fn naive_random_order_reduce(&mut self) {
         unsafe {
-            naive_random_order_reduce(&mut self.0 as *mut Tagged);
+            naive_random_order_reduce(addr_of_mut!(self.0));
         }
     }
 }
