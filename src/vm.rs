@@ -1,4 +1,5 @@
 use rand::seq::SliceRandom;
+use memoffset::offset_of;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem::{align_of, size_of};
 use std::{fmt, ptr};
@@ -181,7 +182,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::LamPtr);
         let lam_raw_ptr = self.ptr() as *mut Lam;
-        &mut (*lam_raw_ptr).x as *mut Tagged
+        lam_raw_ptr.wrapping_offset(offset_of!(Lam, x) as isize) as *mut Tagged
     }
 
     #[inline(always)]
@@ -189,7 +190,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::LamPtr);
         let lam_raw_ptr = self.ptr() as *mut Lam;
-        &mut (*lam_raw_ptr).e as *mut Tagged
+        lam_raw_ptr.wrapping_offset(offset_of!(Lam, e) as isize) as *mut Tagged
     }
 
     #[inline(always)]
@@ -197,7 +198,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::AppPtr);
         let app_raw_ptr = self.ptr() as *mut App;
-        &mut (*app_raw_ptr).e1 as *mut Tagged
+        app_raw_ptr.wrapping_offset(offset_of!(App, e1) as isize) as *mut Tagged
     }
 
     #[inline(always)]
@@ -205,7 +206,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::AppPtr);
         let app_raw_ptr = self.ptr() as *mut App;
-        &mut (*app_raw_ptr).e2 as *mut Tagged
+        app_raw_ptr.wrapping_offset(offset_of!(App, e2) as isize) as *mut Tagged
     }
 
     #[inline(always)]
@@ -213,7 +214,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::SupPtr);
         let sup_raw_ptr = self.ptr() as *mut Sup;
-        &mut (*sup_raw_ptr).l as *mut u64
+        sup_raw_ptr.wrapping_offset(offset_of!(Sup, l) as isize) as *mut u64
     }
 
     #[inline(always)]
@@ -221,7 +222,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::SupPtr);
         let sup_raw_ptr = self.ptr() as *mut Sup;
-        &mut (*sup_raw_ptr).e1 as *mut Tagged
+        sup_raw_ptr.wrapping_offset(offset_of!(Sup, e1) as isize) as *mut Tagged
     }
 
     #[inline(always)]
@@ -229,7 +230,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::SupPtr);
         let sup_raw_ptr = self.ptr() as *mut Sup;
-        &mut (*sup_raw_ptr).e2 as *mut Tagged
+        sup_raw_ptr.wrapping_offset(offset_of!(Sup, e2) as isize) as *mut Tagged
     }
 
     #[inline(always)]
@@ -237,7 +238,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::DupPtr);
         let dup_raw_ptr = self.ptr() as *mut Dup;
-        &mut (*dup_raw_ptr).l as *mut u64
+        dup_raw_ptr.wrapping_offset(offset_of!(Dup, l) as isize) as *mut u64
     }
 
     #[inline(always)]
@@ -245,7 +246,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::DupPtr);
         let dup_raw_ptr = self.ptr() as *mut Dup;
-        &mut (*dup_raw_ptr).a as *mut Tagged
+        dup_raw_ptr.wrapping_offset(offset_of!(Dup, a) as isize) as *mut Tagged
     }
 
     #[inline(always)]
@@ -253,7 +254,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::DupPtr);
         let dup_raw_ptr = self.ptr() as *mut Dup;
-        &mut (*dup_raw_ptr).b as *mut Tagged
+        dup_raw_ptr.wrapping_offset(offset_of!(Dup, b) as isize) as *mut Tagged
     }
 
     #[inline(always)]
@@ -261,7 +262,7 @@ impl Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::DupPtr);
         let dup_raw_ptr = self.ptr() as *mut Dup;
-        &mut (*dup_raw_ptr).e as *mut Tagged
+        dup_raw_ptr.wrapping_offset(offset_of!(Dup, e) as isize) as *mut Tagged
     }
 
     #[inline(always)]
