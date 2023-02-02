@@ -764,12 +764,12 @@ unsafe fn dup_lam_rule(dup_ptr: Tagged, lam_ptr: Tagged) {
 unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
     println!("dup_sup_rule {:?} {:?}", dup_ptr, sup_ptr);
     // dup #l{a b} = #l{e1 e2}
-    // --------------------- DupSupSame
+    // ----------------------- DupSupSame
     // a <- e1
     // b <- e2
 
     // dup #l{a b} = #m{e1 e2}
-    // --------------------- DupSupDiff
+    // ----------------------- DupSupDiff
     // a <- #m{a1 a2}
     // b <- #m{b1 b2}
     // dup #l{a1 b1} = e1
@@ -1728,6 +1728,95 @@ mod test {
             assert_eq!(dup.a, lam_x1_ptr.lam_e_var_use_ptr());
             assert_eq!(dup.b, lam_x2_ptr.lam_e_var_use_ptr());
             assert_eq!(dup.e, lam_y_ptr.lam_bound_var());
+        }
+    }
+
+    #[test]
+    fn test_lam_lam_dup_sup_same() {
+        // dup #0{a b} = #0{x y}
+        // λx λy (a b)
+        // --------------------------- DupSupSame
+        // λx λy (x y)
+        let term = Term::Lam(
+            "x".into(),
+            Box::new(Term::Lam(
+                "y".into(),
+                Box::new(Term::Dup(
+                    0,
+                    "a".into(),
+                    "b".into(),
+                    Box::new(Term::Sup(
+                        0,
+                        Box::new(Term::Var("x".into())),
+                        Box::new(Term::Var("y".into())),
+                    )),
+                    Box::new(Term::App(
+                        Box::new(Term::Var("a".into())),
+                        Box::new(Term::Var("b".into())),
+                    )),
+                )),
+            )),
+        );
+        let mut term_graph = TermGraph::from(&term);
+
+        unsafe {
+            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 5);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::AppPtr);
+            assert_eq!(nodes[3].tag(), Tag::DupPtr);
+            assert_eq!(nodes[4].tag(), Tag::SupPtr);
+            let lam_x_ptr = nodes[0];
+            let lam_y_ptr = nodes[1];
+            let app_ptr = nodes[2];
+            let dup_ptr = nodes[3];
+            let sup_ptr = nodes[4];
+            let lam_x = lam_x_ptr.lam_read();
+            let lam_y = lam_y_ptr.lam_read();
+            let app = app_ptr.app_read();
+            let dup = dup_ptr.dup_read();
+            let sup = sup_ptr.sup_read();
+            assert_eq!(lam_x.x, sup_ptr.sup_e1_var_use_ptr());
+            assert_eq!(lam_x.e, lam_y_ptr);
+            assert_eq!(lam_y.x, sup_ptr.sup_e2_var_use_ptr());
+            assert_eq!(lam_y.e, app_ptr);
+            assert_eq!(app.e1, dup_ptr.dup_a_bound_var());
+            assert_eq!(app.e2, dup_ptr.dup_b_bound_var());
+            assert_eq!(dup.l, 0);
+            assert_eq!(dup.a, app_ptr.app_e1_var_use_ptr());
+            assert_eq!(dup.b, app_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup.e, sup_ptr);
+            assert_eq!(sup.l, 0);
+            assert_eq!(sup.e1, lam_x_ptr.lam_bound_var());
+            assert_eq!(sup.e2, lam_y_ptr.lam_bound_var());
+        }
+
+
+        println!("Before:\n{:?}", term_graph);
+        term_graph.naive_random_order_reduce();
+        println!("After:\n{:?}", term_graph);
+
+        unsafe {
+            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 3);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::AppPtr);
+            let lam_x_ptr = nodes[0];
+            let lam_y_ptr = nodes[1];
+            let app_ptr = nodes[2];
+            let lam_x = lam_x_ptr.lam_read();
+            let lam_y = lam_y_ptr.lam_read();
+            let app = app_ptr.app_read();
+            assert_eq!(lam_x.x, app_ptr.app_e1_var_use_ptr());
+            assert_eq!(lam_x.e, lam_y_ptr);
+            assert_eq!(lam_y.x, app_ptr.app_e2_var_use_ptr());
+            assert_eq!(lam_y.e, app_ptr);
+            assert_eq!(app.e1, lam_x_ptr.lam_bound_var());
+            assert_eq!(app.e2, lam_y_ptr.lam_bound_var());
         }
     }
 }
