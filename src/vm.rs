@@ -83,88 +83,88 @@ impl Dup {
 }
 
 trait LamPtrExt {
-    fn x(self) -> *mut Tagged;
-    fn e(self) -> *mut Tagged;
+    unsafe fn x(self) -> *mut Tagged;
+    unsafe fn e(self) -> *mut Tagged;
 }
 
 impl LamPtrExt for *mut Lam {
     #[inline(always)]
-    fn x(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).x) }
+    unsafe fn x(self) -> *mut Tagged {
+        addr_of_mut!((*self).x)
     }
 
     #[inline(always)]
-    fn e(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).e) }
+    unsafe fn e(self) -> *mut Tagged {
+        addr_of_mut!((*self).e)
     }
 }
 
 trait AppPtrExt {
-    fn e1(self) -> *mut Tagged;
-    fn e2(self) -> *mut Tagged;
+    unsafe fn e1(self) -> *mut Tagged;
+    unsafe fn e2(self) -> *mut Tagged;
 }
 
 impl AppPtrExt for *mut App {
     #[inline(always)]
-    fn e1(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).e1) }
+    unsafe fn e1(self) -> *mut Tagged {
+        addr_of_mut!((*self).e1)
     }
 
     #[inline(always)]
-    fn e2(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).e2) }
+    unsafe fn e2(self) -> *mut Tagged {
+        addr_of_mut!((*self).e2)
     }
 }
 
 trait SupPtrExt {
-    fn l(self) -> *mut u64;
-    fn e1(self) -> *mut Tagged;
-    fn e2(self) -> *mut Tagged;
+    unsafe fn l(self) -> *mut u64;
+    unsafe fn e1(self) -> *mut Tagged;
+    unsafe fn e2(self) -> *mut Tagged;
 }
 
 impl SupPtrExt for *mut Sup {
     #[inline(always)]
-    fn l(self) -> *mut u64 {
-        unsafe { addr_of_mut!((*self).l) }
+    unsafe fn l(self) -> *mut u64 {
+        addr_of_mut!((*self).l)
     }
 
     #[inline(always)]
-    fn e1(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).e1) }
+    unsafe fn e1(self) -> *mut Tagged {
+        addr_of_mut!((*self).e1)
     }
 
     #[inline(always)]
-    fn e2(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).e2) }
+    unsafe fn e2(self) -> *mut Tagged {
+        addr_of_mut!((*self).e2)
     }
 }
 
 trait DupPtrExt {
-    fn l(self) -> *mut u64;
-    fn a(self) -> *mut Tagged;
-    fn b(self) -> *mut Tagged;
-    fn e(self) -> *mut Tagged;
+    unsafe fn l(self) -> *mut u64;
+    unsafe fn a(self) -> *mut Tagged;
+    unsafe fn b(self) -> *mut Tagged;
+    unsafe fn e(self) -> *mut Tagged;
 }
 
 impl DupPtrExt for *mut Dup {
     #[inline(always)]
-    fn l(self) -> *mut u64 {
-        unsafe { addr_of_mut!((*self).l) }
+    unsafe fn l(self) -> *mut u64 {
+        addr_of_mut!((*self).l)
     }
 
     #[inline(always)]
-    fn a(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).a) }
+    unsafe fn a(self) -> *mut Tagged {
+        addr_of_mut!((*self).a)
     }
 
     #[inline(always)]
-    fn b(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).b) }
+    unsafe fn b(self) -> *mut Tagged {
+        addr_of_mut!((*self).b)
     }
 
     #[inline(always)]
-    fn e(self) -> *mut Tagged {
-        unsafe { addr_of_mut!((*self).e) }
+    unsafe fn e(self) -> *mut Tagged {
+        addr_of_mut!((*self).e)
     }
 }
 
