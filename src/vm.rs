@@ -300,7 +300,11 @@ impl Tagged {
     #[inline(always)]
     unsafe fn dup(self) -> *mut Dup {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
-        debug_assert!(self.tag() == Tag::DupPtr || self.tag() == Tag::DupABoundVar);
+        debug_assert!(
+            self.tag() == Tag::DupPtr
+                || self.tag() == Tag::DupABoundVar
+                || self.tag() == Tag::DupBBoundVar
+        );
         self.ptr() as *mut Dup
     }
 
@@ -512,6 +516,9 @@ unsafe fn naive_random_order_reduce(root_ptr_ptr: *mut Tagged) {
         // select a random redex
         let redex = redexes.choose(&mut rand::thread_rng()).copied().unwrap();
         reduce_redex(redex);
+
+        // println!("After reduce_redex:");
+        // print_graph(root_ptr_ptr.read());
     }
 }
 
@@ -527,9 +534,6 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
         let ptr = ptr_ptr.read();
         match ptr.tag() {
             Tag::UnusedVar | Tag::VarUsePtr | Tag::UnboundVar | Tag::LamBoundVar => {}
-            Tag::DupABoundVar | Tag::DupBBoundVar => {
-                stack.push(ptr.ptr() as *mut Tagged);
-            }
             Tag::LamPtr => {
                 stack.push(ptr.lam().e());
             }
@@ -546,7 +550,7 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
                 stack.push(ptr.sup().e1());
                 stack.push(ptr.sup().e2());
             }
-            Tag::DupPtr => {
+            Tag::DupABoundVar | Tag::DupBBoundVar | Tag::DupPtr => {
                 match ptr.dup().e().read().tag() {
                     Tag::LamPtr => redexes.push(ptr_ptr),
                     Tag::SupPtr => redexes.push(ptr_ptr),
@@ -908,6 +912,21 @@ impl Drop for TermGraph {
 impl fmt::Debug for Tagged {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?} {:?}", unsafe { self.tag() }, self.ptr())
+    }
+}
+
+#[allow(dead_code)]
+fn print_graph(ptr: Tagged) {
+    for ptr in NodeIter::new(ptr) {
+        print!("{:?}", ptr.ptr());
+        unsafe {
+            match ptr.node_type() {
+                NodeType::Lam => println!(" {:?}", ptr.lam_read()),
+                NodeType::App => println!(" {:?}", ptr.app_read()),
+                NodeType::Sup => println!(" {:?}", ptr.sup_read()),
+                NodeType::Dup => println!(" {:?}", ptr.dup_read()),
+            }
+        }
     }
 }
 
