@@ -530,11 +530,11 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
     let mut redexes = Vec::new();
     let mut stack = vec![root_ptr_ptr];
     while let Some(ptr_ptr) = stack.pop() {
-        if visited.contains(&ptr_ptr) {
+        let ptr = ptr_ptr.read();
+        if visited.contains(&ptr.ptr()) {
             continue;
         }
-        visited.insert(ptr_ptr);
-        let ptr = ptr_ptr.read();
+        visited.insert(ptr.ptr());
         match ptr.tag() {
             Tag::UnusedVar | Tag::VarUsePtr | Tag::UnboundVar | Tag::LamBoundVar => {}
             Tag::LamPtr => {
