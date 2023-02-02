@@ -255,21 +255,6 @@ impl Tagged {
     }
 
     #[inline(always)]
-    unsafe fn new_lam_bound_var(lam_ptr: Tagged) -> Self {
-        Tagged::new(lam_ptr.ptr(), Tag::LamBoundVar)
-    }
-
-    #[inline(always)]
-    unsafe fn new_dup_a_bound_var(dup_ptr: Tagged) -> Self {
-        Tagged::new(dup_ptr.ptr(), Tag::DupABoundVar)
-    }
-
-    #[inline(always)]
-    unsafe fn new_dup_b_bound_var(dup_ptr: Tagged) -> Self {
-        Tagged::new(dup_ptr.ptr(), Tag::DupBBoundVar)
-    }
-
-    #[inline(always)]
     unsafe fn var_use(self) -> *mut Tagged {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::VarUsePtr);
@@ -456,6 +441,24 @@ impl Tagged {
     }
 
     #[inline(always)]
+    unsafe fn lam_bound_var(self) -> Tagged {
+        debug_assert_eq!(self.tag(), Tag::LamPtr);
+        Tagged::new(self.ptr(), Tag::LamBoundVar)
+    }
+
+    #[inline(always)]
+    unsafe fn dup_a_bound_var(self) -> Tagged {
+        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        Tagged::new(self.ptr(), Tag::DupABoundVar)
+    }
+
+    #[inline(always)]
+    unsafe fn dup_b_bound_var(self) -> Tagged {
+        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        Tagged::new(self.ptr(), Tag::DupBBoundVar)
+    }
+
+    #[inline(always)]
     unsafe fn dealloc_lam(self) {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert_eq!(self.tag(), Tag::LamPtr);
@@ -597,7 +600,7 @@ unsafe fn app_lam_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
     // x <- e2
     let x_use_ptr = lam_ptr.lam().x().read();
     let e2_ptr = app_ptr.app().e2().read();
-    debug_assert_eq!(x_use_ptr.var_use_read(), Tagged::new_lam_bound_var(lam_ptr));
+    debug_assert_eq!(x_use_ptr.var_use_read(), lam_ptr.lam_bound_var());
     x_use_ptr.var_use_write_if_used(e2_ptr);
     e2_ptr.if_bound_var_move_to(x_use_ptr);
 
@@ -636,13 +639,13 @@ unsafe fn app_sup_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
 
     // (e1 a)
     let e1 = sup_e1_e2_ptr.sup().e1().read();
-    let a = Tagged::new_dup_a_bound_var(dup_a_b_ptr);
+    let a = dup_a_b_ptr.dup_a_bound_var();
     app_e1_a_ptr.app().write(App { e1, e2: a });
     e1.if_bound_var_move_to(app_e1_a_ptr.app_e1_var_use_ptr());
 
     // (e2 b)
     let e2 = sup_e1_e2_ptr.sup().e2().read();
-    let b = Tagged::new_dup_b_bound_var(dup_a_b_ptr);
+    let b = dup_a_b_ptr.dup_b_bound_var();
     app_e2_b_ptr.app().write(App { e1: e2, e2: b });
     e2.if_bound_var_move_to(app_e2_b_ptr.app_e1_var_use_ptr());
 
@@ -661,10 +664,10 @@ unsafe fn app_sup_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
 
 unsafe fn dup_lam_rule(dup_ptr: Tagged, lam_ptr: Tagged) {
     // dup #l{a b} = (λx e)
-    // ------------------ DupLam
+    // -------------------- DupLam
     // a <- (λx1 c)
     // b <- (λx2 d)
-    // x <- #l{x1,x2}
+    // x <- #l{x1 x2}
     // dup #l{c d} = e
 
     let dup_a_b_ptr = dup_ptr;
@@ -1009,10 +1012,10 @@ impl From<&Term> for TermGraph {
                 Term::Dup(l, a_str, b_str, e_term, cont_term) => {
                     let dup_ptr = Dup::alloc();
                     let a_scopes = var_binders.entry(*a_str).or_default();
-                    a_scopes.push(Tagged::new_dup_a_bound_var(dup_ptr));
+                    a_scopes.push(dup_ptr.dup_a_bound_var());
                     let a_scope = a_scopes.len();
                     let b_scopes = var_binders.entry(*b_str).or_default();
-                    b_scopes.push(Tagged::new_dup_b_bound_var(dup_ptr));
+                    b_scopes.push(dup_ptr.dup_b_bound_var());
                     let b_scope = b_scopes.len();
                     let e = recurse(var_binders, var_uses, e_term);
                     register_var_use(
@@ -1088,7 +1091,7 @@ impl From<&Term> for TermGraph {
         ) -> Tagged {
             let lam_ptr = Lam::alloc();
             let x_scopes = var_binders.entry(x_str).or_default();
-            x_scopes.push(Tagged::new_lam_bound_var(lam_ptr));
+            x_scopes.push(lam_ptr.lam_bound_var());
             let x_scope = x_scopes.len();
             let e = recurse(var_binders, var_uses, e_term);
             let lam_e_var_use_ptr = lam_ptr.lam_e_var_use_ptr();
@@ -1139,7 +1142,7 @@ mod test {
             assert_eq!(app.e1, lam_ptr);
             assert_eq!(app.e2.tag(), Tag::UnboundVar);
             assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
-            assert_eq!(lam.e, Tagged::new_lam_bound_var(lam_ptr));
+            assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
     }
 
@@ -1207,8 +1210,8 @@ mod test {
             assert_eq!(app.e1, sup_ptr);
             assert_eq!(app.e2.tag(), Tag::UnboundVar);
             assert_eq!(sup.l, 0);
-            assert_eq!(sup.e1, Tagged::new_dup_a_bound_var(dup_ptr));
-            assert_eq!(sup.e2, Tagged::new_dup_b_bound_var(dup_ptr));
+            assert_eq!(sup.e1, dup_ptr.dup_a_bound_var());
+            assert_eq!(sup.e2, dup_ptr.dup_b_bound_var());
             assert_eq!(dup.l, 0);
             assert_eq!(dup.a, sup_ptr.sup_e1_var_use_ptr());
             assert_eq!(dup.b, sup_ptr.sup_e2_var_use_ptr());
@@ -1245,14 +1248,14 @@ mod test {
             let dup = dup_ptr.dup_read();
             let lam = lam_ptr.lam_read();
             assert_eq!(sup.l, 0);
-            assert_eq!(sup.e1, Tagged::new_dup_a_bound_var(dup_ptr));
-            assert_eq!(sup.e2, Tagged::new_dup_b_bound_var(dup_ptr));
+            assert_eq!(sup.e1, dup_ptr.dup_a_bound_var());
+            assert_eq!(sup.e2, dup_ptr.dup_b_bound_var());
             assert_eq!(dup.l, 0);
             assert_eq!(dup.a, sup_ptr.sup_e1_var_use_ptr());
             assert_eq!(dup.b, sup_ptr.sup_e2_var_use_ptr());
             assert_eq!(dup.e, lam_ptr);
             assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
-            assert_eq!(lam.e, Tagged::new_lam_bound_var(lam_ptr));
+            assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
     }
 
@@ -1298,15 +1301,15 @@ mod test {
             let sup_v3_v4 = sup_v3_v4_ptr.sup_read();
             let dup_v3_v4 = dup_v3_v4_ptr2.dup_read();
             assert_eq!(sup_v1_v2.l, 0);
-            assert_eq!(sup_v1_v2.e1, Tagged::new_dup_a_bound_var(dup_v1_v2_ptr));
-            assert_eq!(sup_v1_v2.e2, Tagged::new_dup_b_bound_var(dup_v1_v2_ptr));
+            assert_eq!(sup_v1_v2.e1, dup_v1_v2_ptr.dup_a_bound_var());
+            assert_eq!(sup_v1_v2.e2, dup_v1_v2_ptr.dup_b_bound_var());
             assert_eq!(dup_v1_v2.l, 0);
             assert_eq!(dup_v1_v2.a, sup_v1_v2_ptr.sup_e1_var_use_ptr());
             assert_eq!(dup_v1_v2.b, sup_v1_v2_ptr.sup_e2_var_use_ptr());
             assert_eq!(dup_v1_v2.e, sup_v3_v4_ptr);
             assert_eq!(sup_v3_v4.l, 1);
-            assert_eq!(sup_v3_v4.e1, Tagged::new_dup_a_bound_var(dup_v3_v4_ptr2));
-            assert_eq!(sup_v3_v4.e2, Tagged::new_dup_b_bound_var(dup_v3_v4_ptr2));
+            assert_eq!(sup_v3_v4.e1, dup_v3_v4_ptr2.dup_a_bound_var());
+            assert_eq!(sup_v3_v4.e2, dup_v3_v4_ptr2.dup_b_bound_var());
             assert_eq!(dup_v3_v4.l, 1);
             assert_eq!(dup_v3_v4.a, sup_v3_v4_ptr.sup_e1_var_use_ptr());
             assert_eq!(dup_v3_v4.b, sup_v3_v4_ptr.sup_e2_var_use_ptr());
@@ -1359,14 +1362,14 @@ mod test {
             assert_eq!(lam_x.x, dup_ptr.dup_e_var_use_ptr());
             assert_eq!(lam_x.e, sup_ptr);
             assert_eq!(lam_y.x, lam_y_ptr.lam_e_var_use_ptr());
-            assert_eq!(lam_y.e, Tagged::new_lam_bound_var(lam_y_ptr));
+            assert_eq!(lam_y.e, lam_y_ptr.lam_bound_var());
             assert_eq!(sup.l, 0);
-            assert_eq!(sup.e1, Tagged::new_dup_a_bound_var(dup_ptr));
-            assert_eq!(sup.e2, Tagged::new_dup_b_bound_var(dup_ptr));
+            assert_eq!(sup.e1, dup_ptr.dup_a_bound_var());
+            assert_eq!(sup.e2, dup_ptr.dup_b_bound_var());
             assert_eq!(dup.l, 0);
             assert_eq!(dup.a, sup_ptr.sup_e1_var_use_ptr());
             assert_eq!(dup.b, sup_ptr.sup_e2_var_use_ptr());
-            assert_eq!(dup.e, Tagged::new_lam_bound_var(lam_x_ptr));
+            assert_eq!(dup.e, lam_x_ptr.lam_bound_var());
         }
     }
 
@@ -1418,7 +1421,7 @@ mod test {
             let lam_ptr = nodes[0];
             let lam = lam_ptr.lam_read();
             assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
-            assert_eq!(lam.e, Tagged::new_lam_bound_var(lam_ptr));
+            assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
     }
 
@@ -1462,9 +1465,9 @@ mod test {
             assert_eq!(sup.e1, app_x0_y0_ptr);
             assert_eq!(sup.e2, app_x1_y1_ptr);
             assert_eq!(app_x0_y0.e1, Tagged::new_unbound_var());
-            assert_eq!(app_x0_y0.e2, Tagged::new_dup_a_bound_var(dup_ptr));
+            assert_eq!(app_x0_y0.e2, dup_ptr.dup_a_bound_var());
             assert_eq!(app_x1_y1.e1, Tagged::new_unbound_var());
-            assert_eq!(app_x1_y1.e2, Tagged::new_dup_b_bound_var(dup_ptr));
+            assert_eq!(app_x1_y1.e2, dup_ptr.dup_b_bound_var());
             assert_eq!(dup.l, 0);
             assert_eq!(dup.a, app_x0_y0_ptr.app_e2_var_use_ptr());
             assert_eq!(dup.b, app_x1_y1_ptr.app_e2_var_use_ptr());
@@ -1534,14 +1537,14 @@ mod test {
             assert_eq!(sup.l, 0);
             assert_eq!(sup.e1, app_x_z0_ptr);
             assert_eq!(sup.e2, app_y_z1_ptr);
-            assert_eq!(app_x_z0.e1, Tagged::new_lam_bound_var(lam_x_ptr));
-            assert_eq!(app_x_z0.e2, Tagged::new_dup_a_bound_var(dup_ptr));
-            assert_eq!(app_y_z1.e1, Tagged::new_lam_bound_var(lam_y_ptr));
-            assert_eq!(app_y_z1.e2, Tagged::new_dup_b_bound_var(dup_ptr));
+            assert_eq!(app_x_z0.e1, lam_x_ptr.lam_bound_var());
+            assert_eq!(app_x_z0.e2, dup_ptr.dup_a_bound_var());
+            assert_eq!(app_y_z1.e1, lam_y_ptr.lam_bound_var());
+            assert_eq!(app_y_z1.e2, dup_ptr.dup_b_bound_var());
             assert_eq!(dup.l, 0);
             assert_eq!(dup.a, app_x_z0_ptr.app_e2_var_use_ptr());
             assert_eq!(dup.b, app_y_z1_ptr.app_e2_var_use_ptr());
-            assert_eq!(dup.e, Tagged::new_lam_bound_var(lam_z_ptr));
+            assert_eq!(dup.e, lam_z_ptr.lam_bound_var());
         }
     }
 
@@ -1595,10 +1598,10 @@ mod test {
             assert_eq!(sup.l, 0);
             assert_eq!(sup.e1, app_v1_v4_ptr);
             assert_eq!(sup.e2, app_v2_v5_ptr);
-            assert_eq!(app_v1_v4.e1, Tagged::new_dup_a_bound_var(dup_v1_v2_ptr));
-            assert_eq!(app_v1_v4.e2, Tagged::new_dup_a_bound_var(dup_v4_v5_ptr));
-            assert_eq!(app_v2_v5.e1, Tagged::new_dup_b_bound_var(dup_v1_v2_ptr));
-            assert_eq!(app_v2_v5.e2, Tagged::new_dup_b_bound_var(dup_v4_v5_ptr));
+            assert_eq!(app_v1_v4.e1, dup_v1_v2_ptr.dup_a_bound_var());
+            assert_eq!(app_v1_v4.e2, dup_v4_v5_ptr.dup_a_bound_var());
+            assert_eq!(app_v2_v5.e1, dup_v1_v2_ptr.dup_b_bound_var());
+            assert_eq!(app_v2_v5.e2, dup_v4_v5_ptr.dup_b_bound_var());
             assert_eq!(dup_v1_v2.l, 0);
             assert_eq!(dup_v1_v2.a, app_v1_v4_ptr.app_e1_var_use_ptr());
             assert_eq!(dup_v1_v2.b, app_v2_v5_ptr.app_e1_var_use_ptr());
