@@ -442,26 +442,49 @@ impl Tagged {
 
     #[inline(always)]
     unsafe fn lam_bound_var(self) -> Tagged {
-        debug_assert_eq!(self.tag(), Tag::LamPtr);
+        if self.tag() == Tag::UnusedVar {
+            debug_assert_eq!(self.ptr(), ptr::null_mut());
+            Tagged::new_unbound_var()
+        } else {
+            debug_assert!(self.tag() == Tag::LamPtr || self.tag() == Tag::LamBoundVar);
         Tagged::new(self.ptr(), Tag::LamBoundVar)
+    }
     }
 
     #[inline(always)]
     unsafe fn dup_a_bound_var(self) -> Tagged {
-        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        if self.tag() == Tag::UnusedVar {
+            debug_assert_eq!(self.ptr(), ptr::null_mut());
+            Tagged::new_unbound_var()
+        } else {
+            debug_assert!(
+                self.tag() == Tag::DupPtr
+                    || self.tag() == Tag::DupABoundVar
+                    || self.tag() == Tag::DupBBoundVar
+            );
         Tagged::new(self.ptr(), Tag::DupABoundVar)
+    }
     }
 
     #[inline(always)]
     unsafe fn dup_b_bound_var(self) -> Tagged {
-        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        if self.tag() == Tag::UnusedVar {
+            debug_assert_eq!(self.ptr(), ptr::null_mut());
+            Tagged::new_unbound_var()
+        } else {
+            debug_assert!(
+                self.tag() == Tag::DupPtr
+                    || self.tag() == Tag::DupABoundVar
+                    || self.tag() == Tag::DupBBoundVar
+            );
         Tagged::new(self.ptr(), Tag::DupBBoundVar)
+    }
     }
 
     #[inline(always)]
     unsafe fn dealloc_lam(self) {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
-        debug_assert_eq!(self.tag(), Tag::LamPtr);
+        debug_assert!(self.tag() == Tag::LamPtr || self.tag() == Tag::LamBoundVar);
         let ptr = self.ptr() as *mut u8;
         unsafe {
             std::alloc::dealloc(ptr, std::alloc::Layout::new::<Lam>());
@@ -491,7 +514,11 @@ impl Tagged {
     #[inline(always)]
     unsafe fn dealloc_dup(self) {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
-        debug_assert_eq!(self.tag(), Tag::DupPtr);
+        debug_assert!(
+            self.tag() == Tag::DupPtr
+                || self.tag() == Tag::DupABoundVar
+                || self.tag() == Tag::DupBBoundVar
+        );
         let ptr = self.ptr() as *mut u8;
         unsafe {
             std::alloc::dealloc(ptr, std::alloc::Layout::new::<Dup>());
@@ -501,10 +528,10 @@ impl Tagged {
     #[inline(always)]
     unsafe fn dealloc_any(self) {
         match self.tag() {
-            Tag::LamPtr => self.dealloc_lam(),
+            Tag::LamBoundVar | Tag::LamPtr => self.dealloc_lam(),
             Tag::AppPtr => self.dealloc_app(),
             Tag::SupPtr => self.dealloc_sup(),
-            Tag::DupPtr => self.dealloc_dup(),
+            Tag::DupABoundVar | Tag::DupBBoundVar | Tag::DupPtr => self.dealloc_dup(),
             _ => panic!("dealloc_any called on non-node pointer"),
         }
     }
@@ -578,7 +605,7 @@ unsafe fn reduce_redex(ptr_ptr: *mut Tagged) {
                 _ => unreachable!(),
             }
         }
-        Tag::DupPtr => {
+        Tag::DupABoundVar | Tag::DupBBoundVar | Tag::DupPtr => {
             let dup_ptr = ptr;
             let dup_e = dup_ptr.dup().e().read();
             match dup_e.tag() {
@@ -696,29 +723,25 @@ unsafe fn dup_lam_rule(dup_ptr: Tagged, lam_ptr: Tagged) {
     let dup_c_d_ptr = Dup::alloc();
 
     // a <- (λx1 c)
-    debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr);
+    debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
     dup_a_b_a.var_use_write_if_used(lam_x1_c_ptr);
-    lam_x1_c_ptr.lam_write_if_bound(Lam {
-        x: sup_x1_x2_ptr.sup_e1_var_use_ptr(),
-        e: dup_c_d_ptr,
-    });
+    let x1 = sup_x1_x2_ptr.sup_e1_var_use_ptr();
+    let c = dup_c_d_ptr.dup_a_bound_var();
+    lam_x1_c_ptr.lam_write_if_bound(Lam { x: x1, e: c });
 
     // b <- (λx2 d)
-    debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr);
+    debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
     dup_a_b_b.var_use_write_if_used(lam_x2_d_ptr);
-    lam_x2_d_ptr.lam_write_if_bound(Lam {
-        x: sup_x1_x2_ptr.sup_e2_var_use_ptr(),
-        e: dup_c_d_ptr,
-    });
+    let x2 = sup_x1_x2_ptr.sup_e2_var_use_ptr();
+    let d = dup_c_d_ptr.dup_b_bound_var();
+    lam_x2_d_ptr.lam_write_if_bound(Lam { x: x2, e: d });
 
     // x <- #l{x1,x2}
-    debug_assert_eq!(lam_x_e_x.var_use_read(), dup_a_b_ptr.dup().e().read());
+    debug_assert_eq!(lam_x_e_x.var_use_read(), lam_x_e_x.lam_bound_var());
     lam_x_e_x.var_use_write_if_used(sup_x1_x2_ptr);
-    sup_x1_x2_ptr.sup_write_if_bound(Sup {
-        l,
-        e1: lam_x1_c_ptr,
-        e2: lam_x2_d_ptr,
-    });
+    let x1 = lam_x1_c_ptr.lam_bound_var();
+    let x2 = lam_x2_d_ptr.lam_bound_var();
+    sup_x1_x2_ptr.sup_write_if_bound(Sup { l, e1: x1, e2: x2 });
 
     // dup #l{c d} = e
     let e = lam_x_e_ptr.lam().e().read();
@@ -760,12 +783,12 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
 
     if l == m {
         // a <- e1
-        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr);
+        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
         let e1 = sup_e1_e2_ptr.sup().e1().read();
         dup_a_b_a.var_use_write_if_used(e1);
         e1.if_bound_var_move_to(dup_a_b_a);
         // b <- e2
-        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr);
+        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
         let e2 = sup_e1_e2_ptr.sup().e2().read();
         dup_a_b_b.var_use_write_if_used(e2);
         e2.if_bound_var_move_to(dup_a_b_b);
@@ -784,7 +807,7 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
         let dup_a2_b2_ptr = Dup::alloc();
 
         // a <- #m{a1 a2}
-        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr);
+        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
         dup_a_b_a.var_use_write_if_used(sup_a1_a2_ptr);
         sup_a1_a2_ptr.sup_write_if_bound(Sup {
             l: m,
@@ -793,7 +816,7 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
         });
 
         // b <- #m{b1 b2}
-        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr);
+        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
         dup_a_b_b.var_use_write_if_used(sup_b1_b2_ptr);
         sup_b1_b2_ptr.sup_write_if_bound(Sup {
             l: m,
