@@ -1,8 +1,8 @@
 use rand::seq::SliceRandom;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem::{align_of, size_of};
-use std::{fmt, ptr};
 use std::ptr::addr_of_mut;
+use std::{fmt, ptr};
 
 use crate::intern::IStr;
 use crate::syntax::Term;
@@ -40,6 +40,14 @@ struct Dup {
     a: Tagged,
     b: Tagged,
     e: Tagged,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NodeType {
+    Lam,
+    App,
+    Sup,
+    Dup,
 }
 
 impl Lam {
@@ -161,7 +169,7 @@ impl DupPtrExt for *mut Dup {
 }
 
 /// A tagged value or pointer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C, align(8))]
 struct Tagged(*mut ());
 const _: () = assert!(size_of::<Tagged>() == 8);
@@ -226,6 +234,16 @@ impl Tagged {
         std::mem::transmute(value)
     }
 
+    unsafe fn node_type(self) -> NodeType {
+        match self.tag() {
+            Tag::LamPtr => NodeType::Lam,
+            Tag::AppPtr => NodeType::App,
+            Tag::SupPtr => NodeType::Sup,
+            Tag::DupPtr => NodeType::Dup,
+            _ => panic!(),
+        }
+    }
+
     #[inline(always)]
     unsafe fn new_unused_var() -> Self {
         Tagged::new(ptr::null_mut(), Tag::UnusedVar)
@@ -238,17 +256,17 @@ impl Tagged {
 
     #[inline(always)]
     unsafe fn new_lam_bound_var(lam_ptr: Tagged) -> Self {
-        Tagged::new(lam_ptr.ptr() as *mut (), Tag::LamBoundVar)
+        Tagged::new(lam_ptr.ptr(), Tag::LamBoundVar)
     }
 
     #[inline(always)]
     unsafe fn new_dup_a_bound_var(dup_ptr: Tagged) -> Self {
-        Tagged::new(dup_ptr.ptr() as *mut (), Tag::DupABoundVar)
+        Tagged::new(dup_ptr.ptr(), Tag::DupABoundVar)
     }
 
     #[inline(always)]
     unsafe fn new_dup_b_bound_var(dup_ptr: Tagged) -> Self {
-        Tagged::new(dup_ptr.ptr() as *mut (), Tag::DupBBoundVar)
+        Tagged::new(dup_ptr.ptr(), Tag::DupBBoundVar)
     }
 
     #[inline(always)]
@@ -510,7 +528,7 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
         match ptr.tag() {
             Tag::UnusedVar | Tag::VarUsePtr | Tag::UnboundVar | Tag::LamBoundVar => {}
             Tag::DupABoundVar | Tag::DupBBoundVar => {
-                stack.push(ptr.ptr() as *const _ as *mut Tagged);
+                stack.push(ptr.ptr() as *mut Tagged);
             }
             Tag::LamPtr => {
                 stack.push(ptr.lam().e());
@@ -606,28 +624,25 @@ unsafe fn app_sup_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
     let sup_app_app_ptr = Sup::alloc();
 
     // dup #l{a b} = e3
+    let a = app_e1_a_ptr.app_e2_var_use_ptr();
+    let b = app_e2_b_ptr.app_e2_var_use_ptr();
     let e3 = app_sup_e3_ptr.app().e2().read();
-    dup_a_b_ptr.dup().write(Dup {
-        l,
-        a: app_e1_a_ptr.app_e2_var_use_ptr(),
-        b: app_e2_b_ptr.app_e2_var_use_ptr(),
-        e: e3,
-    });
+    dup_a_b_ptr.dup().write(Dup { l, a, b, e: e3 });
     e3.if_bound_var_move_to(dup_a_b_ptr.dup_e_var_use_ptr());
 
-    // #l{(e1 a) (e2 b)}
+    // (e1 a)
     let e1 = sup_e1_e2_ptr.sup().e1().read();
-    app_e1_a_ptr.app().write(App {
-        e1,
-        e2: Tagged::new_dup_a_bound_var(dup_a_b_ptr),
-    });
+    let a = Tagged::new_dup_a_bound_var(dup_a_b_ptr);
+    app_e1_a_ptr.app().write(App { e1, e2: a });
     e1.if_bound_var_move_to(app_e1_a_ptr.app_e1_var_use_ptr());
+
+    // (e2 b)
     let e2 = sup_e1_e2_ptr.sup().e2().read();
-    app_e2_b_ptr.app().write(App {
-        e1: e2,
-        e2: Tagged::new_dup_b_bound_var(dup_a_b_ptr),
-    });
+    let b = Tagged::new_dup_b_bound_var(dup_a_b_ptr);
+    app_e2_b_ptr.app().write(App { e1: e2, e2: b });
     e2.if_bound_var_move_to(app_e2_b_ptr.app_e1_var_use_ptr());
+
+    // #l{(e1 a) (e2 b)}
     sup_app_app_ptr.sup().write(Sup {
         l,
         e1: app_e1_a_ptr,
@@ -803,108 +818,110 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
     sup_e1_e2_ptr.dealloc_sup();
 }
 
-unsafe fn visit_nodes<F: FnMut(Tagged)>(ptr: Tagged, mut f: F) {
-    let mut visited = HashSet::new();
-    let mut queue = VecDeque::new();
-    queue.push_back(ptr);
-    while let Some(ptr) = queue.pop_front() {
-        if visited.contains(&ptr) {
-            continue;
+struct NodeIter {
+    visited: HashSet<Tagged>,
+    queue: VecDeque<Tagged>,
+}
+
+impl NodeIter {
+    fn new(ptr: Tagged) -> Self {
+        let visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(ptr);
+        Self { visited, queue }
+    }
+}
+
+impl Iterator for NodeIter {
+    type Item = Tagged;
+    fn next(&mut self) -> Option<Self::Item> {
+        unsafe {
+            while let Some(ptr) = self.queue.pop_front() {
+                if self.visited.contains(&ptr) {
+                    continue;
+                }
+                self.visited.insert(ptr);
+                match ptr.tag() {
+                    Tag::UnusedVar => {}
+                    Tag::VarUsePtr => unreachable!(),
+                    Tag::UnboundVar => {}
+                    Tag::LamBoundVar => {}
+                    Tag::DupABoundVar | Tag::DupBBoundVar => {
+                        self.queue.push_back(Tagged::new(ptr.ptr(), Tag::DupPtr));
+                    }
+                    Tag::LamPtr => {
+                        let lam = ptr.lam_read();
+                        if lam.x.tag() == Tag::VarUsePtr {
+                            self.queue.push_back(lam.x.var_use_read());
+                        }
+                        self.queue.push_back(lam.e);
+                        return Some(ptr);
+                    }
+                    Tag::AppPtr => {
+                        let app = ptr.app_read();
+                        self.queue.push_back(app.e1);
+                        self.queue.push_back(app.e2);
+                        return Some(ptr);
+                    }
+                    Tag::SupPtr => {
+                        let sup = ptr.sup_read();
+                        self.queue.push_back(sup.e1);
+                        self.queue.push_back(sup.e2);
+                        return Some(ptr);
+                    }
+                    Tag::DupPtr => {
+                        let dup = ptr.dup_read();
+                        if dup.a.tag() == Tag::VarUsePtr {
+                            self.queue.push_back(dup.a.var_use_read());
+                        }
+                        if dup.b.tag() == Tag::VarUsePtr {
+                            self.queue.push_back(dup.b.var_use_read());
+                        }
+                        self.queue.push_back(dup.e);
+                        return Some(ptr);
+                    }
+                }
+            }
         }
-        visited.insert(ptr);
-        match ptr.tag() {
-            Tag::UnusedVar => {}
-            Tag::VarUsePtr => unreachable!(),
-            Tag::UnboundVar => {}
-            Tag::LamBoundVar => {}
-            Tag::DupABoundVar | Tag::DupBBoundVar => {
-                queue.push_back(Tagged::new(ptr.ptr(), Tag::DupPtr));
-            }
-            Tag::LamPtr => {
-                let lam = ptr.lam_read();
-                if lam.x.tag() == Tag::VarUsePtr {
-                    queue.push_back(lam.x.var_use_read());
-                }
-                queue.push_back(lam.e);
-                f(ptr);
-            }
-            Tag::AppPtr => {
-                let app = ptr.app_read();
-                queue.push_back(app.e1);
-                queue.push_back(app.e2);
-                f(ptr);
-            }
-            Tag::SupPtr => {
-                let sup = ptr.sup_read();
-                queue.push_back(sup.e1);
-                queue.push_back(sup.e2);
-                f(ptr);
-            }
-            Tag::DupPtr => {
-                let dup = ptr.dup_read();
-                if dup.a.tag() == Tag::VarUsePtr {
-                    queue.push_back(dup.a.var_use_read());
-                }
-                if dup.b.tag() == Tag::VarUsePtr {
-                    queue.push_back(dup.b.var_use_read());
-                }
-                queue.push_back(dup.e);
-                f(ptr);
-            }
-        }
+        None
     }
 }
 
 /// An owned term graph.
 pub struct TermGraph(Tagged);
 
+impl TermGraph {
+    fn node_iter(&self) -> NodeIter {
+        NodeIter::new(self.0)
+    }
+}
+
 impl Drop for TermGraph {
     fn drop(&mut self) {
-        let mut nodes = Vec::new();
-        unsafe {
-            visit_nodes(self.0, |ptr| nodes.push(ptr));
-            for node in nodes {
-                node.dealloc_any();
-            }
+        let nodes = self.node_iter().collect::<Vec<_>>();
+        for node in nodes {
+            unsafe { node.dealloc_any() };
         }
+    }
+}
+
+impl fmt::Debug for Tagged {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?} {:?}", unsafe { self.tag() }, self.ptr())
     }
 }
 
 impl fmt::Debug for TermGraph {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut nodes = Vec::new();
-        unsafe {
-            visit_nodes(self.0, |ptr| nodes.push(ptr));
-            for ptr in nodes {
-                write!(f, "{:?} {:?} ", ptr.ptr(), ptr.tag())?;
-                match ptr.tag() {
-                    Tag::UnusedVar | Tag::VarUsePtr => {}
-                    Tag::UnboundVar | Tag::LamBoundVar | Tag::DupABoundVar | Tag::DupBBoundVar => {}
-                    Tag::LamPtr => {
-                        let lam = ptr.lam_read();
-                        write!(f, "({:?} {:?}) ", lam.x.ptr(), lam.x.tag())?;
-                        write!(f, "({:?} {:?}) ", lam.e.ptr(), lam.e.tag())?;
-                    }
-                    Tag::AppPtr => {
-                        let app = ptr.app_read();
-                        write!(f, "({:?} {:?}) ", app.e1.ptr(), app.e1.tag())?;
-                        write!(f, "({:?} {:?}) ", app.e2.ptr(), app.e2.tag())?;
-                    }
-                    Tag::SupPtr => {
-                        let sup = ptr.sup_read();
-                        write!(f, "{:?} ", sup.l)?;
-                        write!(f, "({:?} {:?}) ", sup.e1.ptr(), sup.e1.tag())?;
-                        write!(f, "({:?} {:?}) ", sup.e2.ptr(), sup.e2.tag())?;
-                    }
-                    Tag::DupPtr => {
-                        let dup = ptr.dup_read();
-                        write!(f, "{:?} ", dup.l)?;
-                        write!(f, "({:?} {:?}) ", dup.a.ptr(), dup.a.tag())?;
-                        write!(f, "({:?} {:?}) ", dup.b.ptr(), dup.b.tag())?;
-                        write!(f, "({:?} {:?}) ", dup.e.ptr(), dup.e.tag())?;
-                    }
+        for ptr in self.node_iter() {
+            write!(f, "{:?}", ptr.ptr())?;
+            unsafe {
+                match ptr.node_type() {
+                    NodeType::Lam => write!(f, " {:?}\n", ptr.lam_read())?,
+                    NodeType::App => write!(f, " {:?}\n", ptr.app_read())?,
+                    NodeType::Sup => write!(f, " {:?}\n", ptr.sup_read())?,
+                    NodeType::Dup => write!(f, " {:?}\n", ptr.dup_read())?,
                 }
-                write!(f, "\n")?;
             }
         }
         Ok(())
@@ -1092,8 +1109,7 @@ mod test {
         let term_graph = TermGraph::from(&term);
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::AppPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 2);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
             assert_eq!(nodes[1].tag(), Tag::LamPtr);
@@ -1122,8 +1138,7 @@ mod test {
         let term_graph = TermGraph::from(&term);
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::AppPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 2);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
             assert_eq!(nodes[1].tag(), Tag::SupPtr);
@@ -1159,8 +1174,7 @@ mod test {
         let term_graph = TermGraph::from(&term);
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::AppPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 3);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
             assert_eq!(nodes[1].tag(), Tag::SupPtr);
@@ -1200,8 +1214,7 @@ mod test {
         let term_graph = TermGraph::from(&term);
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::SupPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 3);
             assert_eq!(nodes[0].tag(), Tag::SupPtr);
             assert_eq!(nodes[1].tag(), Tag::DupPtr);
@@ -1251,8 +1264,7 @@ mod test {
         let term_graph = TermGraph::from(&term);
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::SupPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::SupPtr);
             assert_eq!(nodes[1].tag(), Tag::DupPtr);
@@ -1306,8 +1318,7 @@ mod test {
         let term_graph = TermGraph::from(&term);
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::AppPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 5);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
             assert_eq!(nodes[1].tag(), Tag::LamPtr);
@@ -1357,8 +1368,7 @@ mod test {
 
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::UnboundVar);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 0);
         }
     }
@@ -1383,8 +1393,7 @@ mod test {
 
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::LamPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
             let lam_ptr = nodes[0];
@@ -1416,8 +1425,7 @@ mod test {
 
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::SupPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::SupPtr);
             assert_eq!(nodes[1].tag(), Tag::AppPtr);
@@ -1475,8 +1483,7 @@ mod test {
 
         unsafe {
             assert_eq!(term_graph.0.tag(), Tag::SupPtr);
-            let mut nodes = Vec::new();
-            visit_nodes(term_graph.0, |ptr| nodes.push(ptr));
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 5);
             assert_eq!(nodes[0].tag(), Tag::SupPtr);
             assert_eq!(nodes[1].tag(), Tag::AppPtr);
