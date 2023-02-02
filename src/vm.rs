@@ -1582,7 +1582,31 @@ mod test {
             assert_eq!(nodes[2].tag(), Tag::AppPtr);
             assert_eq!(nodes[3].tag(), Tag::DupPtr);
             assert_eq!(nodes[4].tag(), Tag::DupPtr);
-            // TODO: complete this test
+            let sup_ptr = nodes[0];
+            let app_v1_v4_ptr = nodes[1];
+            let app_v2_v5_ptr = nodes[2];
+            let dup_v1_v2_ptr = nodes[3];
+            let dup_v4_v5_ptr = nodes[4];
+            let sup = sup_ptr.sup_read();
+            let app_v1_v4 = app_v1_v4_ptr.app_read();
+            let app_v2_v5 = app_v2_v5_ptr.app_read();
+            let dup_v1_v2 = dup_v1_v2_ptr.dup_read();
+            let dup_v4_v5 = dup_v4_v5_ptr.dup_read();
+            assert_eq!(sup.l, 0);
+            assert_eq!(sup.e1, app_v1_v4_ptr);
+            assert_eq!(sup.e2, app_v2_v5_ptr);
+            assert_eq!(app_v1_v4.e1, Tagged::new_dup_a_bound_var(dup_v1_v2_ptr));
+            assert_eq!(app_v1_v4.e2, Tagged::new_dup_a_bound_var(dup_v4_v5_ptr));
+            assert_eq!(app_v2_v5.e1, Tagged::new_dup_b_bound_var(dup_v1_v2_ptr));
+            assert_eq!(app_v2_v5.e2, Tagged::new_dup_b_bound_var(dup_v4_v5_ptr));
+            assert_eq!(dup_v1_v2.l, 0);
+            assert_eq!(dup_v1_v2.a, app_v1_v4_ptr.app_e1_var_use_ptr());
+            assert_eq!(dup_v1_v2.b, app_v2_v5_ptr.app_e1_var_use_ptr());
+            assert_eq!(dup_v1_v2.e, Tagged::new_unbound_var());
+            assert_eq!(dup_v4_v5.l, 0);
+            assert_eq!(dup_v4_v5.a, app_v1_v4_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup_v4_v5.b, app_v2_v5_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup_v4_v5.e, Tagged::new_unbound_var());
         }
     }
 }
