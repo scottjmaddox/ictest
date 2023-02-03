@@ -978,10 +978,10 @@ impl fmt::Debug for TermGraph {
             write!(f, "{:?}", ptr.ptr())?;
             unsafe {
                 match ptr.node_type() {
-                    NodeType::Lam => write!(f, " {:?}\n", ptr.lam_read())?,
-                    NodeType::App => write!(f, " {:?}\n", ptr.app_read())?,
-                    NodeType::Sup => write!(f, " {:?}\n", ptr.sup_read())?,
-                    NodeType::Dup => write!(f, " {:?}\n", ptr.dup_read())?,
+                    NodeType::Lam => writeln!(f, " {:?}", ptr.lam_read())?,
+                    NodeType::App => writeln!(f, " {:?}", ptr.app_read())?,
+                    NodeType::Sup => writeln!(f, " {:?}", ptr.sup_read())?,
+                    NodeType::Dup => writeln!(f, " {:?}", ptr.dup_read())?,
                 }
             }
         }
@@ -1075,11 +1075,11 @@ impl From<&Term> for TermGraph {
                     let a = var_uses
                         .get(&(*a_str, a_scope))
                         .copied()
-                        .unwrap_or(Tagged::new_unused_var());
+                        .unwrap_or_else(|| Tagged::new_unused_var());
                     let b = var_uses
                         .get(&(*b_str, b_scope))
                         .copied()
-                        .unwrap_or(Tagged::new_unused_var());
+                        .unwrap_or_else(|| Tagged::new_unused_var());
                     assert!(a.tag() != Tag::UnusedVar || b.tag() != Tag::UnusedVar);
                     dup_ptr.dup().write(Dup { l: *l, a, b, e });
                     cont
@@ -1138,7 +1138,7 @@ impl From<&Term> for TermGraph {
             let x = var_uses
                 .get(&(x_str, x_scope))
                 .copied()
-                .unwrap_or(Tagged::new_unused_var());
+                .unwrap_or_else(|| Tagged::new_unused_var());
             lam_ptr.lam().write(Lam { x, e });
             lam_ptr
         }

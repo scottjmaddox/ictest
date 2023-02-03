@@ -130,9 +130,9 @@ pub fn get_char(state: State) -> Answer<char> {
 pub fn peek_char(state: State) -> Answer<char> {
     let (state, _) = skip(state)?;
     if let Some(got) = head(state) {
-        return Ok((state, got));
+        Ok((state, got))
     } else {
-        return Ok((state, '\0'));
+        Ok((state, '\0'))
     }
 }
 
