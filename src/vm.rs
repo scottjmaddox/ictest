@@ -903,7 +903,7 @@ impl Iterator for NodeIter {
                     Tag::UnboundVar => {}
                     Tag::LamBoundVar => {}
                     Tag::DupABoundVar | Tag::DupBBoundVar => {
-                        self.queue.push_back(Tagged::new(ptr.ptr(), Tag::DupPtr));
+                        self.queue.push_front(Tagged::new(ptr.ptr(), Tag::DupPtr));
                     }
                     Tag::LamPtr => {
                         let lam = ptr.lam_read();
