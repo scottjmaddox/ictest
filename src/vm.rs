@@ -1165,6 +1165,11 @@ mod test {
     use super::*;
 
     #[test]
+    fn empty_test() {
+        // Empty test used as a baseline for memory leak detection.
+    }
+
+    #[test]
     fn test_app_lam_from_term() {
         // term = ((λx. x) y)
         let term = Term::App(
