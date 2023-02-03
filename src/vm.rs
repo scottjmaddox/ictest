@@ -324,53 +324,6 @@ impl Tagged {
     }
 
     #[inline(always)]
-    unsafe fn var_use_write_if_used(self, val: Tagged) {
-        if self.tag() == Tag::UnusedVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-        } else {
-            self.var_use().write(val)
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn lam_write_if_bound(self, lam: Lam) {
-        if self.tag() == Tag::UnboundVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-        } else {
-            self.lam().write(lam)
-        }
-    }
-
-    #[allow(dead_code)]
-    #[inline(always)]
-    unsafe fn app_write_if_bound(self, app: App) {
-        if self.tag() == Tag::UnboundVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-        } else {
-            self.app().write(app)
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn sup_write_if_bound(self, sup: Sup) {
-        if self.tag() == Tag::UnboundVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-        } else {
-            self.sup().write(sup)
-        }
-    }
-
-    #[allow(dead_code)]
-    #[inline(always)]
-    unsafe fn dup_write_if_bound(self, dup: Dup) {
-        if self.tag() == Tag::UnboundVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-        } else {
-            self.dup().write(dup)
-        }
-    }
-
-    #[inline(always)]
     unsafe fn lam_e_var_use_ptr(self) -> Tagged {
         if self.tag() == Tag::UnboundVar {
             debug_assert_eq!(self.ptr(), ptr::null_mut());
@@ -482,6 +435,20 @@ impl Tagged {
     }
 
     #[inline(always)]
+    unsafe fn garbage_collect(self) {
+        match self.tag() {
+            Tag::UnboundVar => {}
+            Tag::LamBoundVar => self.lam().x().write(Tagged::new_unused_var()),
+            Tag::DupABoundVar => self.dup().a().write(Tagged::new_unused_var()),
+            Tag::DupBBoundVar => self.dup().b().write(Tagged::new_unused_var()),
+            Tag::LamPtr => self.dealloc_lam(),
+            Tag::AppPtr => self.dealloc_app(),
+            Tag::SupPtr => self.dealloc_sup(),
+            _ => unreachable!(),
+        }
+    }
+
+    #[inline(always)]
     unsafe fn dealloc_lam(self) {
         debug_assert_ne!(self.ptr(), ptr::null_mut());
         debug_assert!(self.tag() == Tag::LamPtr || self.tag() == Tag::LamBoundVar);
@@ -526,13 +493,13 @@ impl Tagged {
     }
 
     #[inline(always)]
-    unsafe fn dealloc_any(self) {
+    unsafe fn dealloc_any_node(self) {
         match self.tag() {
             Tag::LamBoundVar | Tag::LamPtr => self.dealloc_lam(),
             Tag::AppPtr => self.dealloc_app(),
             Tag::SupPtr => self.dealloc_sup(),
             Tag::DupABoundVar | Tag::DupBBoundVar | Tag::DupPtr => self.dealloc_dup(),
-            _ => panic!("dealloc_any called on non-node pointer"),
+            _ => panic!("dealloc_any_node called on non-node pointer"),
         }
     }
 }
@@ -634,10 +601,14 @@ unsafe fn rule_app_lam(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
 
     // x <- e2
     let x_use_ptr = lam_ptr.lam().x().read();
-    let e2_ptr = app_ptr.app().e2().read();
+    let e2 = app_ptr.app().e2().read();
+    if x_use_ptr.tag() == Tag::UnusedVar {
+        e2.garbage_collect();
+    } else {
     debug_assert_eq!(x_use_ptr.var_use_read(), lam_ptr.lam_bound_var());
-    x_use_ptr.var_use_write_if_used(e2_ptr);
-    e2_ptr.if_bound_var_move_to(x_use_ptr);
+        x_use_ptr.var_use().write(e2);
+        e2.if_bound_var_move_to(x_use_ptr);
+    }
 
     // e
     let e_ptr = lam_ptr.lam().e().read();
@@ -732,38 +703,53 @@ unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
     } else {
         Sup::alloc()
     };
-    let dup_c_d_ptr = Dup::alloc();
+    let dup_c_d_ptr = if dup_a_b_a.tag() == Tag::UnusedVar && dup_a_b_b.tag() == Tag::UnusedVar {
+        Tagged::new_unbound_var()
+    } else {
+        Dup::alloc()
+    };
 
     // a <- (λx1 c)
+    if dup_a_b_a.tag() != Tag::UnusedVar {
     debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
-    dup_a_b_a.var_use_write_if_used(lam_x1_c_ptr);
+        dup_a_b_a.var_use().write(lam_x1_c_ptr);
     let x1 = sup_x1_x2_ptr.sup_e1_var_use_ptr();
     let c = dup_c_d_ptr.dup_a_bound_var();
-    lam_x1_c_ptr.lam_write_if_bound(Lam { x: x1, e: c });
+        lam_x1_c_ptr.lam().write(Lam { x: x1, e: c });
+    }
 
     // b <- (λx2 d)
+    if dup_a_b_b.tag() != Tag::UnusedVar {
     debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
-    dup_a_b_b.var_use_write_if_used(lam_x2_d_ptr);
+        dup_a_b_b.var_use().write(lam_x2_d_ptr);
     let x2 = sup_x1_x2_ptr.sup_e2_var_use_ptr();
     let d = dup_c_d_ptr.dup_b_bound_var();
-    lam_x2_d_ptr.lam_write_if_bound(Lam { x: x2, e: d });
+        lam_x2_d_ptr.lam().write(Lam { x: x2, e: d });
+    }
 
     // x <- #l{x1,x2}
-    debug_assert_eq!(lam_x_e_x.var_use_read(), lam_x_e_x.lam_bound_var());
-    lam_x_e_x.var_use_write_if_used(sup_x1_x2_ptr);
+    if lam_x_e_x.tag() != Tag::UnusedVar {
+        // TODO: do these actually need to be bound?
+        debug_assert_ne!(lam_x1_c_ptr.tag(), Tag::UnboundVar);
+        debug_assert_ne!(lam_x2_d_ptr.tag(), Tag::UnboundVar);
+
+        debug_assert_eq!(lam_x_e_x.var_use_read(), lam_x_e_ptr.lam_bound_var());
+        lam_x_e_x.var_use().write(sup_x1_x2_ptr);
     let x1 = lam_x1_c_ptr.lam_bound_var();
     let x2 = lam_x2_d_ptr.lam_bound_var();
-    sup_x1_x2_ptr.sup_write_if_bound(Sup { l, e1: x1, e2: x2 });
+        sup_x1_x2_ptr.sup().write(Sup { l, e1: x1, e2: x2 });
+    }
 
     // dup #l{c d} = e
     let e = lam_x_e_ptr.lam().e().read();
-    dup_c_d_ptr.dup().write(Dup {
-        l,
-        a: lam_x1_c_ptr.lam_e_var_use_ptr(),
-        b: lam_x2_d_ptr.lam_e_var_use_ptr(),
-        e,
-    });
+    if dup_c_d_ptr.tag() == Tag::UnboundVar {
+        e.garbage_collect();
+    } else {
+        let c = lam_x1_c_ptr.lam_e_var_use_ptr();
+        let d = lam_x2_d_ptr.lam_e_var_use_ptr();
+        dup_c_d_ptr.dup().write(Dup { l, a: c, b: d, e });
     e.if_bound_var_move_to(dup_c_d_ptr.dup_e_var_use_ptr());
+    }
 
     // deallocate unreachable nodes
     dup_a_b_ptr.dealloc_dup();
@@ -772,17 +758,6 @@ unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
 
 unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
     println!("rule_dup_sup({:?}, {:?})", dup_ptr, sup_ptr);
-    // dup #l{a b} = #l{e1 e2}
-    // ----------------------- DupSupSame
-    // a <- e1
-    // b <- e2
-
-    // dup #l{a b} = #m{e1 e2}
-    // ----------------------- DupSupDiff
-    // a <- #m{a1 a2}
-    // b <- #m{b1 b2}
-    // dup #l{a1 b1} = e1
-    // dup #l{a2 b2} = e2
 
     let dup_a_b_ptr = dup_ptr;
     let sup_e1_e2_ptr = sup_ptr;
@@ -792,22 +767,47 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
     let dup_a_b_a = dup_a_b_ptr.dup().a().read();
     let dup_a_b_b = dup_a_b_ptr.dup().b().read();
 
-    // let sup_e1_e2 = sup_e1_e2_ptr.read_sup();
-
     if l == m {
-        println!("DupSupSame");
+        // dup #l{a b} = #l{e1 e2}
+        // ----------------------- DupSupSame
         // a <- e1
-        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
-        let e1 = sup_e1_e2_ptr.sup().e1().read();
-        dup_a_b_a.var_use_write_if_used(e1);
-        e1.if_bound_var_move_to(dup_a_b_a);
         // b <- e2
-        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
+        println!("DupSupSame");
+
+        // a <- e1
+        let e1 = sup_e1_e2_ptr.sup().e1().read();
+        if dup_a_b_a.tag() == Tag::UnusedVar {
+            e1.garbage_collect();
+        } else {
+        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
+            dup_a_b_a.var_use().write(e1);
+        e1.if_bound_var_move_to(dup_a_b_a);
+        }
+
+        // b <- e2
         let e2 = sup_e1_e2_ptr.sup().e2().read();
-        dup_a_b_b.var_use_write_if_used(e2);
+        if dup_a_b_b.tag() == Tag::UnusedVar {
+            e2.garbage_collect();
+        } else {
+        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
+            dup_a_b_b.var_use().write(e2);
         e2.if_bound_var_move_to(dup_a_b_b);
+        }
     } else {
+        // dup #l{a b} = #m{e1 e2}
+        // ----------------------- DupSupDiff
+        // a <- #m{a1 a2}
+        // b <- #m{b1 b2}
+        // dup #l{a1 b1} = e1
+        // dup #l{a2 b2} = e2
         println!("DupSupDiff");
+
+        if dup_a_b_a.tag() == Tag::UnusedVar && dup_a_b_b.tag() == Tag::UnusedVar {
+            let e1 = sup_e1_e2_ptr.sup().e1().read();
+            e1.garbage_collect();
+            let e2 = sup_e1_e2_ptr.sup().e2().read();
+            e2.garbage_collect();
+        } else {
         let sup_a1_a2_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
             Tagged::new_unbound_var()
         } else {
@@ -822,22 +822,30 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
         let dup_a2_b2_ptr = Dup::alloc();
 
         // a <- #m{a1 a2}
+            if dup_a_b_a.tag() != Tag::UnusedVar {
         debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
-        dup_a_b_a.var_use_write_if_used(sup_a1_a2_ptr);
-        sup_a1_a2_ptr.sup_write_if_bound(Sup {
+                dup_a_b_a.var_use().write(sup_a1_a2_ptr);
+                let a1 = dup_a1_b1_ptr.dup_a_bound_var();
+                let a2 = dup_a2_b2_ptr.dup_a_bound_var();
+                sup_a1_a2_ptr.sup().write(Sup {
             l: m,
-            e1: dup_a1_b1_ptr.dup_a_bound_var(),
-            e2: dup_a2_b2_ptr.dup_a_bound_var(),
+                    e1: a1,
+                    e2: a2,
         });
+            }
 
         // b <- #m{b1 b2}
+            if dup_a_b_b.tag() != Tag::UnusedVar {
         debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
-        dup_a_b_b.var_use_write_if_used(sup_b1_b2_ptr);
-        sup_b1_b2_ptr.sup_write_if_bound(Sup {
+                dup_a_b_b.var_use().write(sup_b1_b2_ptr);
+                let b1 = dup_a1_b1_ptr.dup_b_bound_var();
+                let b2 = dup_a2_b2_ptr.dup_b_bound_var();
+                sup_b1_b2_ptr.sup().write(Sup {
             l: m,
-            e1: dup_a1_b1_ptr.dup_b_bound_var(),
-            e2: dup_a2_b2_ptr.dup_b_bound_var(),
+                    e1: b1,
+                    e2: b2,
         });
+            }
 
         // dup #l{a1 b1} = e1
         let e1 = sup_e1_e2_ptr.sup().e1().read();
@@ -858,6 +866,7 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
             e: e2,
         });
         e2.if_bound_var_move_to(dup_a2_b2_ptr.dup_e_var_use_ptr());
+        }
     }
 
     // deallocate unreachable nodes
@@ -947,7 +956,7 @@ impl Drop for TermGraph {
     fn drop(&mut self) {
         let nodes = self.node_iter().collect::<Vec<_>>();
         for node in nodes {
-            unsafe { node.dealloc_any() };
+            unsafe { node.dealloc_any_node() };
         }
     }
 }
