@@ -945,8 +945,7 @@ impl TermGraph {
 
 impl Drop for TermGraph {
     fn drop(&mut self) {
-        let nodes = self.node_iter().collect::<Vec<_>>();
-        for node in nodes {
+        for node in self.node_iter() {
             unsafe { node.dealloc_any_node() };
         }
     }
