@@ -546,10 +546,16 @@ unsafe fn naive_random_order_reduce(root_ptr_ptr: *mut Tagged) {
         // select a random redex
         let redex = redexes.choose(&mut rand::thread_rng()).copied().unwrap();
         reduce_redex(redex);
-
-        println!("After reduce_redex:");
-        print_graph(root_ptr_ptr.read());
     }
+}
+
+unsafe fn naive_reduce_step(root_ptr_ptr: *mut Tagged) -> bool {
+    let redexes = collect_redexes(root_ptr_ptr);
+    if redexes.is_empty() {
+        return false;
+    }
+    reduce_redex(redexes.first().copied().unwrap());
+    true
 }
 
 unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
@@ -600,8 +606,8 @@ unsafe fn reduce_redex(ptr_ptr: *mut Tagged) {
             let app_ptr = ptr;
             let app_e1 = app_ptr.app().e1().read();
             match app_e1.tag() {
-                Tag::LamPtr => app_lam_rule(ptr_ptr, app_ptr, app_e1),
-                Tag::SupPtr => app_sup_rule(ptr_ptr, app_ptr, app_e1),
+                Tag::LamPtr => rule_app_lam(ptr_ptr, app_ptr, app_e1),
+                Tag::SupPtr => rule_app_sup(ptr_ptr, app_ptr, app_e1),
                 _ => unreachable!(),
             }
         }
@@ -609,8 +615,8 @@ unsafe fn reduce_redex(ptr_ptr: *mut Tagged) {
             let dup_ptr = ptr;
             let dup_e = dup_ptr.dup().e().read();
             match dup_e.tag() {
-                Tag::LamPtr => dup_lam_rule(dup_ptr, dup_e),
-                Tag::SupPtr => dup_sup_rule(dup_ptr, dup_e),
+                Tag::LamPtr => rule_dup_lam(dup_ptr, dup_e),
+                Tag::SupPtr => rule_dup_sup(dup_ptr, dup_e),
                 _ => unreachable!(),
             }
         }
@@ -618,8 +624,9 @@ unsafe fn reduce_redex(ptr_ptr: *mut Tagged) {
     }
 }
 
-unsafe fn app_lam_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
-    println!("app_lam_rule {:?} {:?} {:?}", ptr_ptr, app_ptr, lam_ptr);
+unsafe fn rule_app_lam(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
+    println!("rule_app_lam({:?}, {:?}, {:?})", ptr_ptr, app_ptr, lam_ptr);
+    println!("AppLam");
     // (λx e) e2
     // ---------- AppLam
     // x <- e2
@@ -642,8 +649,9 @@ unsafe fn app_lam_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
     lam_ptr.dealloc_lam();
 }
 
-unsafe fn app_sup_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
-    println!("app_sup_rule {:?} {:?} {:?}", ptr_ptr, app_ptr, sup_ptr);
+unsafe fn rule_app_sup(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
+    println!("rule_app_sup({:?}, {:?}, {:?})", ptr_ptr, app_ptr, sup_ptr);
+    println!("AppSup");
     // #l{e1 e2} e3
     // ----------------- AppSup
     // dup #l{a b} = e3
@@ -691,8 +699,9 @@ unsafe fn app_sup_rule(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
     sup_e1_e2_ptr.dealloc_sup();
 }
 
-unsafe fn dup_lam_rule(dup_ptr: Tagged, lam_ptr: Tagged) {
-    println!("dup_lam_rule {:?} {:?}", dup_ptr, lam_ptr);
+unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
+    println!("rule_dup_lam({:?}, {:?})", dup_ptr, lam_ptr);
+    println!("DupLam");
     // dup #l{a b} = (λx e)
     // -------------------- DupLam
     // a <- (λx1 c)
@@ -761,8 +770,8 @@ unsafe fn dup_lam_rule(dup_ptr: Tagged, lam_ptr: Tagged) {
     lam_x_e_ptr.dealloc_lam();
 }
 
-unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
-    println!("dup_sup_rule {:?} {:?}", dup_ptr, sup_ptr);
+unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
+    println!("rule_dup_sup({:?}, {:?})", dup_ptr, sup_ptr);
     // dup #l{a b} = #l{e1 e2}
     // ----------------------- DupSupSame
     // a <- e1
@@ -786,6 +795,7 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
     // let sup_e1_e2 = sup_e1_e2_ptr.read_sup();
 
     if l == m {
+        println!("DupSupSame");
         // a <- e1
         debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
         let e1 = sup_e1_e2_ptr.sup().e1().read();
@@ -797,6 +807,7 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
         dup_a_b_b.var_use_write_if_used(e2);
         e2.if_bound_var_move_to(dup_a_b_b);
     } else {
+        println!("DupSupDiff");
         let sup_a1_a2_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
             Tagged::new_unbound_var()
         } else {
@@ -815,8 +826,8 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
         dup_a_b_a.var_use_write_if_used(sup_a1_a2_ptr);
         sup_a1_a2_ptr.sup_write_if_bound(Sup {
             l: m,
-            e1: dup_a1_b1_ptr,
-            e2: dup_a2_b2_ptr,
+            e1: dup_a1_b1_ptr.dup_a_bound_var(),
+            e2: dup_a2_b2_ptr.dup_a_bound_var(),
         });
 
         // b <- #m{b1 b2}
@@ -824,9 +835,10 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
         dup_a_b_b.var_use_write_if_used(sup_b1_b2_ptr);
         sup_b1_b2_ptr.sup_write_if_bound(Sup {
             l: m,
-            e1: dup_a1_b1_ptr,
-            e2: dup_a2_b2_ptr,
+            e1: dup_a1_b1_ptr.dup_b_bound_var(),
+            e2: dup_a2_b2_ptr.dup_b_bound_var(),
         });
+
         // dup #l{a1 b1} = e1
         let e1 = sup_e1_e2_ptr.sup().e1().read();
         dup_a1_b1_ptr.dup().write(Dup {
@@ -836,6 +848,7 @@ unsafe fn dup_sup_rule(dup_ptr: Tagged, sup_ptr: Tagged) {
             e: e1,
         });
         e1.if_bound_var_move_to(dup_a1_b1_ptr.dup_e_var_use_ptr());
+
         // dup #l{a2 b2} = e2
         let e2 = sup_e1_e2_ptr.sup().e2().read();
         dup_a2_b2_ptr.dup().write(Dup {
@@ -1141,6 +1154,10 @@ impl TermGraph {
         unsafe {
             naive_random_order_reduce(addr_of_mut!(self.0));
         }
+    }
+
+    pub fn naive_reduce_step(&mut self) -> bool {
+        unsafe { naive_reduce_step(addr_of_mut!(self.0)) }
     }
 }
 
@@ -1735,7 +1752,7 @@ mod test {
     fn test_lam_lam_dup_sup_same() {
         // dup #0{a b} = #0{x y}
         // λx λy (a b)
-        // --------------------------- DupSupSame
+        // ---------------------- DupSupSame
         // λx λy (x y)
         let term = Term::Lam(
             "x".into(),
@@ -1793,7 +1810,6 @@ mod test {
             assert_eq!(sup.e2, lam_y_ptr.lam_bound_var());
         }
 
-
         println!("Before:\n{:?}", term_graph);
         term_graph.naive_random_order_reduce();
         println!("After:\n{:?}", term_graph);
@@ -1818,5 +1834,256 @@ mod test {
             assert_eq!(app.e1, lam_x_ptr.lam_bound_var());
             assert_eq!(app.e2, lam_y_ptr.lam_bound_var());
         }
+    }
+
+    #[test]
+    fn test_lam_lam_dup_sup_diff() {
+        // dup #0{a b} = #1{x y}
+        // λx λy (a b)
+        // --------------------------- DupSupDiff
+        // dup #0{ax bx} = x
+        // dup #0{ay by} = y
+        // λx λy (#1{ax ay} #1{bx by})
+        // --------------------------- AppSup
+        // dup #0{ax bx} = x
+        // dup #0{ay by} = y
+        // dup #1{bx0 by0} = #1{bx by}
+        // λx λy #1{(ax bx0) (ay by0)}
+        // --------------------------- DupSupSame
+        // dup #0{ax bx} = x
+        // dup #0{ay by} = y
+        // λx λy #1{(ax bx) (ay by)}
+
+        let term = Term::Lam(
+            "x".into(),
+            Box::new(Term::Lam(
+                "y".into(),
+                Box::new(Term::Dup(
+                    0,
+                    "a".into(),
+                    "b".into(),
+                    Box::new(Term::Sup(
+                        1,
+                        Box::new(Term::Var("x".into())),
+                        Box::new(Term::Var("y".into())),
+                    )),
+                    Box::new(Term::App(
+                        Box::new(Term::Var("a".into())),
+                        Box::new(Term::Var("b".into())),
+                    )),
+                )),
+            )),
+        );
+        let mut term_graph = TermGraph::from(&term);
+        println!("Step 0:\n{:?}", term_graph);
+
+        unsafe {
+            // dup #0{a b} = #1{x y}
+            // λx λy (a b)
+            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 5);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::AppPtr);
+            assert_eq!(nodes[3].tag(), Tag::DupPtr);
+            assert_eq!(nodes[4].tag(), Tag::SupPtr);
+            let lam_x_ptr = nodes[0];
+            let lam_y_ptr = nodes[1];
+            let app_ptr = nodes[2];
+            let dup_ptr = nodes[3];
+            let sup_ptr = nodes[4];
+            let lam_x = lam_x_ptr.lam_read();
+            let lam_y = lam_y_ptr.lam_read();
+            let app = app_ptr.app_read();
+            let dup = dup_ptr.dup_read();
+            let sup = sup_ptr.sup_read();
+            assert_eq!(lam_x.x, sup_ptr.sup_e1_var_use_ptr());
+            assert_eq!(lam_x.e, lam_y_ptr);
+            assert_eq!(lam_y.x, sup_ptr.sup_e2_var_use_ptr());
+            assert_eq!(lam_y.e, app_ptr);
+            assert_eq!(app.e1, dup_ptr.dup_a_bound_var());
+            assert_eq!(app.e2, dup_ptr.dup_b_bound_var());
+            assert_eq!(dup.l, 0);
+            assert_eq!(dup.a, app_ptr.app_e1_var_use_ptr());
+            assert_eq!(dup.b, app_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup.e, sup_ptr);
+            assert_eq!(sup.l, 1);
+            assert_eq!(sup.e1, lam_x_ptr.lam_bound_var());
+            assert_eq!(sup.e2, lam_y_ptr.lam_bound_var());
+        }
+
+        assert!(term_graph.naive_reduce_step());
+        println!("Step 1:\n{:?}", term_graph);
+
+        unsafe {
+            // dup #0{ax bx} = x
+            // dup #0{ay by} = y
+            // λx λy (#1{ax ay} #1{bx by})
+            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 7);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::AppPtr);
+            assert_eq!(nodes[3].tag(), Tag::SupPtr);
+            assert_eq!(nodes[4].tag(), Tag::SupPtr);
+            assert_eq!(nodes[5].tag(), Tag::DupPtr);
+            assert_eq!(nodes[6].tag(), Tag::DupPtr);
+            let lam_x_ptr = nodes[0];
+            let lam_y_ptr = nodes[1];
+            let app_ptr = nodes[2];
+            let sup_a_ptr = nodes[3];
+            let sup_b_ptr = nodes[4];
+            let dup_x_ptr = nodes[5];
+            let dup_y_ptr = nodes[6];
+            let lam_x = lam_x_ptr.lam_read();
+            let lam_y = lam_y_ptr.lam_read();
+            let app = app_ptr.app_read();
+            let sup_a = sup_a_ptr.sup_read();
+            let sup_b = sup_b_ptr.sup_read();
+            let dup_x = dup_x_ptr.dup_read();
+            let dup_y = dup_y_ptr.dup_read();
+            assert_eq!(lam_x.x, dup_x_ptr.dup_e_var_use_ptr());
+            assert_eq!(lam_x.e, lam_y_ptr);
+            assert_eq!(lam_y.x, dup_y_ptr.dup_e_var_use_ptr());
+            assert_eq!(lam_y.e, app_ptr);
+            assert_eq!(app.e1, sup_a_ptr);
+            assert_eq!(app.e2, sup_b_ptr);
+            assert_eq!(sup_a.l, 1);
+            assert_eq!(sup_a.e1, dup_x_ptr.dup_a_bound_var());
+            assert_eq!(sup_a.e2, dup_y_ptr.dup_a_bound_var());
+            assert_eq!(sup_b.l, 1);
+            assert_eq!(sup_b.e1, dup_x_ptr.dup_b_bound_var());
+            assert_eq!(sup_b.e2, dup_y_ptr.dup_b_bound_var());
+            assert_eq!(dup_x.l, 0);
+            assert_eq!(dup_x.a, sup_a_ptr.sup_e1_var_use_ptr());
+            assert_eq!(dup_x.b, sup_b_ptr.sup_e1_var_use_ptr());
+            assert_eq!(dup_x.e, lam_x_ptr.lam_bound_var());
+            assert_eq!(dup_y.l, 0);
+            assert_eq!(dup_y.a, sup_a_ptr.sup_e2_var_use_ptr());
+            assert_eq!(dup_y.b, sup_b_ptr.sup_e2_var_use_ptr());
+            assert_eq!(dup_y.e, lam_y_ptr.lam_bound_var());
+        }
+
+        assert!(term_graph.naive_reduce_step());
+        println!("Step 1:\n{:?}", term_graph);
+
+        unsafe {
+            // dup #0{ax bx} = x
+            // dup #0{ay by} = y
+            // dup #1{bx0 by0} = #1{bx by}
+            // λx λy #1{(ax bx0) (ay by0)}
+            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 9);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::SupPtr);
+            assert_eq!(nodes[3].tag(), Tag::AppPtr);
+            assert_eq!(nodes[4].tag(), Tag::AppPtr);
+            assert_eq!(nodes[5].tag(), Tag::DupPtr);
+            assert_eq!(nodes[6].tag(), Tag::DupPtr);
+            assert_eq!(nodes[7].tag(), Tag::DupPtr);
+            assert_eq!(nodes[8].tag(), Tag::SupPtr);
+            let lam_x_ptr = nodes[0];
+            let lam_y_ptr = nodes[1];
+            let sup_app_app_ptr = nodes[2];
+            let app_ax_bx0_ptr = nodes[3];
+            let app_ay_by0_ptr = nodes[4];
+            let dup_ax_bx_ptr = nodes[5];
+            let dup_bx0_by0_ptr = nodes[6];
+            let dup_ay_by_ptr = nodes[7];
+            let sup_bx_by_ptr = nodes[8];
+            let lam_x = lam_x_ptr.lam_read();
+            let lam_y = lam_y_ptr.lam_read();
+            let sup_app_app = sup_app_app_ptr.sup_read();
+            let app_ax_bx0 = app_ax_bx0_ptr.app_read();
+            let app_ay_by0 = app_ay_by0_ptr.app_read();
+            let dup_ax_bx = dup_ax_bx_ptr.dup_read();
+            let dup_bx0_by0 = dup_bx0_by0_ptr.dup_read();
+            let dup_ay_by = dup_ay_by_ptr.dup_read();
+            let sup_bx_by = sup_bx_by_ptr.sup_read();
+            assert_eq!(lam_x.x, dup_ax_bx_ptr.dup_e_var_use_ptr());
+            assert_eq!(lam_x.e, lam_y_ptr);
+            assert_eq!(lam_y.x, dup_ay_by_ptr.dup_e_var_use_ptr());
+            assert_eq!(lam_y.e, sup_app_app_ptr);
+            assert_eq!(sup_app_app.l, 1);
+            assert_eq!(sup_app_app.e1, app_ax_bx0_ptr);
+            assert_eq!(sup_app_app.e2, app_ay_by0_ptr);
+            assert_eq!(app_ax_bx0.e1, dup_ax_bx_ptr.dup_a_bound_var());
+            assert_eq!(app_ax_bx0.e2, dup_bx0_by0_ptr.dup_a_bound_var());
+            assert_eq!(app_ay_by0.e1, dup_ay_by_ptr.dup_a_bound_var());
+            assert_eq!(app_ay_by0.e2, dup_bx0_by0_ptr.dup_b_bound_var());
+            assert_eq!(dup_ax_bx.l, 0);
+            assert_eq!(dup_ax_bx.a, app_ax_bx0_ptr.app_e1_var_use_ptr());
+            assert_eq!(dup_ax_bx.b, sup_bx_by_ptr.sup_e1_var_use_ptr());
+            assert_eq!(dup_ax_bx.e, lam_x_ptr.lam_bound_var());
+            assert_eq!(dup_bx0_by0.l, 1);
+            assert_eq!(dup_bx0_by0.a, app_ax_bx0_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup_bx0_by0.b, app_ay_by0_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup_bx0_by0.e, sup_bx_by_ptr);
+            assert_eq!(dup_ay_by.l, 0);
+            assert_eq!(dup_ay_by.a, app_ay_by0_ptr.app_e1_var_use_ptr());
+            assert_eq!(dup_ay_by.b, sup_bx_by_ptr.sup_e2_var_use_ptr());
+            assert_eq!(dup_ay_by.e, lam_y_ptr.lam_bound_var());
+            assert_eq!(sup_bx_by.l, 1);
+            assert_eq!(sup_bx_by.e1, dup_ax_bx_ptr.dup_b_bound_var());
+            assert_eq!(sup_bx_by.e2, dup_ay_by_ptr.dup_b_bound_var());
+        }
+
+        assert!(term_graph.naive_reduce_step());
+        println!("Step 2:\n{:?}", term_graph);
+
+        unsafe {
+            // dup #0{ax bx} = x
+            // dup #0{ay by} = y
+            // λx λy #1{(ax bx) (ay by)}
+            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 7);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::SupPtr);
+            assert_eq!(nodes[3].tag(), Tag::AppPtr);
+            assert_eq!(nodes[4].tag(), Tag::AppPtr);
+            assert_eq!(nodes[5].tag(), Tag::DupPtr);
+            assert_eq!(nodes[6].tag(), Tag::DupPtr);
+            let lam_x_ptr = nodes[0];
+            let lam_y_ptr = nodes[1];
+            let sup_app_app_ptr = nodes[2];
+            let app_ax_bx_ptr = nodes[3];
+            let app_ay_by_ptr = nodes[4];
+            let dup_ax_bx_ptr = nodes[5];
+            let dup_ay_by_ptr = nodes[6];
+            let lam_x = lam_x_ptr.lam_read();
+            let lam_y = lam_y_ptr.lam_read();
+            let sup_app_app = sup_app_app_ptr.sup_read();
+            let app_ax_bx = app_ax_bx_ptr.app_read();
+            let app_ay_by = app_ay_by_ptr.app_read();
+            let dup_ax_bx = dup_ax_bx_ptr.dup_read();
+            let dup_ay_by = dup_ay_by_ptr.dup_read();
+            assert_eq!(lam_x.x, dup_ax_bx_ptr.dup_e_var_use_ptr());
+            assert_eq!(lam_x.e, lam_y_ptr);
+            assert_eq!(lam_y.x, dup_ay_by_ptr.dup_e_var_use_ptr());
+            assert_eq!(lam_y.e, sup_app_app_ptr);
+            assert_eq!(sup_app_app.l, 1);
+            assert_eq!(sup_app_app.e1, app_ax_bx_ptr);
+            assert_eq!(sup_app_app.e2, app_ay_by_ptr);
+            assert_eq!(app_ax_bx.e1, dup_ax_bx_ptr.dup_a_bound_var());
+            assert_eq!(app_ax_bx.e2, dup_ax_bx_ptr.dup_b_bound_var());
+            assert_eq!(app_ay_by.e1, dup_ay_by_ptr.dup_a_bound_var());
+            assert_eq!(app_ay_by.e2, dup_ay_by_ptr.dup_b_bound_var());
+            assert_eq!(dup_ax_bx.l, 0);
+            assert_eq!(dup_ax_bx.a, app_ax_bx_ptr.app_e1_var_use_ptr());
+            assert_eq!(dup_ax_bx.b, app_ax_bx_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup_ax_bx.e, lam_x_ptr.lam_bound_var());
+            assert_eq!(dup_ay_by.l, 0);
+            assert_eq!(dup_ay_by.a, app_ay_by_ptr.app_e1_var_use_ptr());
+            assert_eq!(dup_ay_by.b, app_ay_by_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup_ay_by.e, lam_y_ptr.lam_bound_var());
+        }
+
+        assert!(!term_graph.naive_reduce_step());
     }
 }
