@@ -907,9 +907,6 @@ impl Iterator for NodeIter {
                     }
                     Tag::LamPtr => {
                         let lam = ptr.lam_read();
-                        if lam.x.tag() == Tag::VarUsePtr {
-                            self.queue.push_back(lam.x.var_use_read());
-                        }
                         self.queue.push_back(lam.e);
                         return Some(ptr);
                     }
@@ -927,12 +924,6 @@ impl Iterator for NodeIter {
                     }
                     Tag::DupPtr => {
                         let dup = ptr.dup_read();
-                        if dup.a.tag() == Tag::VarUsePtr {
-                            self.queue.push_back(dup.a.var_use_read());
-                        }
-                        if dup.b.tag() == Tag::VarUsePtr {
-                            self.queue.push_back(dup.b.var_use_read());
-                        }
                         self.queue.push_back(dup.e);
                         return Some(ptr);
                     }
