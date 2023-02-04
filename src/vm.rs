@@ -605,7 +605,7 @@ unsafe fn rule_app_lam(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
     if x_use_ptr.tag() == Tag::UnusedVar {
         e2.garbage_collect();
     } else {
-    debug_assert_eq!(x_use_ptr.var_use_read(), lam_ptr.lam_bound_var());
+        debug_assert_eq!(x_use_ptr.var_use_read(), lam_ptr.lam_bound_var());
         x_use_ptr.var_use().write(e2);
         e2.if_bound_var_move_to(x_use_ptr);
     }
@@ -711,19 +711,19 @@ unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
 
     // a <- (λx1 c)
     if dup_a_b_a.tag() != Tag::UnusedVar {
-    debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
+        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
         dup_a_b_a.var_use().write(lam_x1_c_ptr);
-    let x1 = sup_x1_x2_ptr.sup_e1_var_use_ptr();
-    let c = dup_c_d_ptr.dup_a_bound_var();
+        let x1 = sup_x1_x2_ptr.sup_e1_var_use_ptr();
+        let c = dup_c_d_ptr.dup_a_bound_var();
         lam_x1_c_ptr.lam().write(Lam { x: x1, e: c });
     }
 
     // b <- (λx2 d)
     if dup_a_b_b.tag() != Tag::UnusedVar {
-    debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
+        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
         dup_a_b_b.var_use().write(lam_x2_d_ptr);
-    let x2 = sup_x1_x2_ptr.sup_e2_var_use_ptr();
-    let d = dup_c_d_ptr.dup_b_bound_var();
+        let x2 = sup_x1_x2_ptr.sup_e2_var_use_ptr();
+        let d = dup_c_d_ptr.dup_b_bound_var();
         lam_x2_d_ptr.lam().write(Lam { x: x2, e: d });
     }
 
@@ -735,8 +735,8 @@ unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
 
         debug_assert_eq!(lam_x_e_x.var_use_read(), lam_x_e_ptr.lam_bound_var());
         lam_x_e_x.var_use().write(sup_x1_x2_ptr);
-    let x1 = lam_x1_c_ptr.lam_bound_var();
-    let x2 = lam_x2_d_ptr.lam_bound_var();
+        let x1 = lam_x1_c_ptr.lam_bound_var();
+        let x2 = lam_x2_d_ptr.lam_bound_var();
         sup_x1_x2_ptr.sup().write(Sup { l, e1: x1, e2: x2 });
     }
 
@@ -748,7 +748,7 @@ unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
         let c = lam_x1_c_ptr.lam_e_var_use_ptr();
         let d = lam_x2_d_ptr.lam_e_var_use_ptr();
         dup_c_d_ptr.dup().write(Dup { l, a: c, b: d, e });
-    e.if_bound_var_move_to(dup_c_d_ptr.dup_e_var_use_ptr());
+        e.if_bound_var_move_to(dup_c_d_ptr.dup_e_var_use_ptr());
     }
 
     // deallocate unreachable nodes
@@ -779,9 +779,9 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
         if dup_a_b_a.tag() == Tag::UnusedVar {
             e1.garbage_collect();
         } else {
-        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
+            debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
             dup_a_b_a.var_use().write(e1);
-        e1.if_bound_var_move_to(dup_a_b_a);
+            e1.if_bound_var_move_to(dup_a_b_a);
         }
 
         // b <- e2
@@ -789,9 +789,9 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
         if dup_a_b_b.tag() == Tag::UnusedVar {
             e2.garbage_collect();
         } else {
-        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
+            debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
             dup_a_b_b.var_use().write(e2);
-        e2.if_bound_var_move_to(dup_a_b_b);
+            e2.if_bound_var_move_to(dup_a_b_b);
         }
     } else {
         // dup #l{a b} = #m{e1 e2}
@@ -808,64 +808,64 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
             let e2 = sup_e1_e2_ptr.sup().e2().read();
             e2.garbage_collect();
         } else {
-        let sup_a1_a2_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
-            Tagged::new_unbound_var()
-        } else {
-            Sup::alloc()
-        };
-        let sup_b1_b2_ptr = if dup_a_b_b.tag() == Tag::UnusedVar {
-            Tagged::new_unbound_var()
-        } else {
-            Sup::alloc()
-        };
-        let dup_a1_b1_ptr = Dup::alloc();
-        let dup_a2_b2_ptr = Dup::alloc();
+            let sup_a1_a2_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
+                Tagged::new_unbound_var()
+            } else {
+                Sup::alloc()
+            };
+            let sup_b1_b2_ptr = if dup_a_b_b.tag() == Tag::UnusedVar {
+                Tagged::new_unbound_var()
+            } else {
+                Sup::alloc()
+            };
+            let dup_a1_b1_ptr = Dup::alloc();
+            let dup_a2_b2_ptr = Dup::alloc();
 
-        // a <- #m{a1 a2}
+            // a <- #m{a1 a2}
             if dup_a_b_a.tag() != Tag::UnusedVar {
-        debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
+                debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
                 dup_a_b_a.var_use().write(sup_a1_a2_ptr);
                 let a1 = dup_a1_b1_ptr.dup_a_bound_var();
                 let a2 = dup_a2_b2_ptr.dup_a_bound_var();
                 sup_a1_a2_ptr.sup().write(Sup {
-            l: m,
+                    l: m,
                     e1: a1,
                     e2: a2,
-        });
+                });
             }
 
-        // b <- #m{b1 b2}
+            // b <- #m{b1 b2}
             if dup_a_b_b.tag() != Tag::UnusedVar {
-        debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
+                debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
                 dup_a_b_b.var_use().write(sup_b1_b2_ptr);
                 let b1 = dup_a1_b1_ptr.dup_b_bound_var();
                 let b2 = dup_a2_b2_ptr.dup_b_bound_var();
                 sup_b1_b2_ptr.sup().write(Sup {
-            l: m,
+                    l: m,
                     e1: b1,
                     e2: b2,
-        });
+                });
             }
 
-        // dup #l{a1 b1} = e1
-        let e1 = sup_e1_e2_ptr.sup().e1().read();
-        dup_a1_b1_ptr.dup().write(Dup {
-            l,
-            a: sup_a1_a2_ptr.sup_e1_var_use_ptr(),
-            b: sup_b1_b2_ptr.sup_e1_var_use_ptr(),
-            e: e1,
-        });
-        e1.if_bound_var_move_to(dup_a1_b1_ptr.dup_e_var_use_ptr());
+            // dup #l{a1 b1} = e1
+            let e1 = sup_e1_e2_ptr.sup().e1().read();
+            dup_a1_b1_ptr.dup().write(Dup {
+                l,
+                a: sup_a1_a2_ptr.sup_e1_var_use_ptr(),
+                b: sup_b1_b2_ptr.sup_e1_var_use_ptr(),
+                e: e1,
+            });
+            e1.if_bound_var_move_to(dup_a1_b1_ptr.dup_e_var_use_ptr());
 
-        // dup #l{a2 b2} = e2
-        let e2 = sup_e1_e2_ptr.sup().e2().read();
-        dup_a2_b2_ptr.dup().write(Dup {
-            l,
-            a: sup_a1_a2_ptr.sup_e2_var_use_ptr(),
-            b: sup_b1_b2_ptr.sup_e2_var_use_ptr(),
-            e: e2,
-        });
-        e2.if_bound_var_move_to(dup_a2_b2_ptr.dup_e_var_use_ptr());
+            // dup #l{a2 b2} = e2
+            let e2 = sup_e1_e2_ptr.sup().e2().read();
+            dup_a2_b2_ptr.dup().write(Dup {
+                l,
+                a: sup_a1_a2_ptr.sup_e2_var_use_ptr(),
+                b: sup_b1_b2_ptr.sup_e2_var_use_ptr(),
+                e: e2,
+            });
+            e2.if_bound_var_move_to(dup_a2_b2_ptr.dup_e_var_use_ptr());
         }
     }
 
