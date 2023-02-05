@@ -439,8 +439,18 @@ impl Tagged {
         match self.tag() {
             Tag::UnboundVar => {}
             Tag::LamBoundVar => self.lam().x().write(Tagged::new_unused_var()),
-            Tag::DupABoundVar => self.dup().a().write(Tagged::new_unused_var()),
-            Tag::DupBBoundVar => self.dup().b().write(Tagged::new_unused_var()),
+            Tag::DupABoundVar => {
+                self.dup().a().write(Tagged::new_unused_var());
+                if self.dup().b().read().tag() == Tag::UnusedVar {
+                    self.dealloc_dup();
+                }
+            }
+            Tag::DupBBoundVar => {
+                self.dup().b().write(Tagged::new_unused_var());
+                if self.dup().a().read().tag() == Tag::UnusedVar {
+                    self.dealloc_dup();
+                }
+            }
             Tag::LamPtr => self.dealloc_lam(),
             Tag::AppPtr => self.dealloc_app(),
             Tag::SupPtr => self.dealloc_sup(),
