@@ -294,12 +294,7 @@ impl Tagged {
 
     #[inline(always)]
     unsafe fn var_use_read(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-            Tagged::new_unbound_var()
-        } else {
-            self.var_use().read()
-        }
+        self.var_use().read()
     }
 
     #[inline(always)]
