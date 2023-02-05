@@ -908,10 +908,8 @@ impl Iterator for NodeIter {
                 }
                 self.visited.insert(ptr);
                 match ptr.tag() {
-                    Tag::UnusedVar => {}
-                    Tag::VarUsePtr => unreachable!(),
-                    Tag::UnboundVar => {}
-                    Tag::LamBoundVar => {}
+                    Tag::UnusedVar | Tag::VarUsePtr => unreachable!(),
+                    Tag::UnboundVar | Tag::LamBoundVar => {}
                     Tag::DupABoundVar | Tag::DupBBoundVar => {
                         self.queue.push_front(Tagged::new(ptr.ptr(), Tag::DupPtr));
                     }
