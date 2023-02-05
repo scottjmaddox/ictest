@@ -42,7 +42,6 @@ struct Dup {
     e: Tagged,
 }
 
-#[derive(Debug, Clone, Copy)]
 enum NodeType {
     Lam,
     App,
