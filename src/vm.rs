@@ -2420,6 +2420,19 @@ mod test {
             assert_eq!(sup.e2, Tagged::new_unbound_var());
         }
 
-        // TODO: complete this test
+        assert!(term_graph.naive_reduce_step());
+        println!("After:\n{:?}", term_graph);
+
+        unsafe {
+            // λx y
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            let lam_x_ptr = nodes[0];
+            let lam_x = lam_x_ptr.lam_read();
+            assert_eq!(lam_x.x, Tagged::new_unused_var());
+            assert_eq!(lam_x.e, Tagged::new_unbound_var());
+        }
     }
 }
