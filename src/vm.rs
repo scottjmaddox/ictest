@@ -924,11 +924,11 @@ impl Iterator for NodeIter {
 }
 
 /// An owned term graph.
-pub struct TermGraph(Tagged);
+pub struct TermGraph(*mut Tagged);
 
 impl TermGraph {
     fn node_iter(&self) -> NodeIter {
-        NodeIter::new(self.0)
+        NodeIter::new(unsafe { self.0.read() })
     }
 }
 
@@ -937,6 +937,7 @@ impl Drop for TermGraph {
         for node in self.node_iter() {
             unsafe { node.dealloc_any_node() };
         }
+        unsafe { std::alloc::dealloc(self.0 as *mut u8, std::alloc::Layout::new::<Tagged>()) };
     }
 }
 
@@ -982,170 +983,110 @@ impl From<&Term> for TermGraph {
     fn from(term: &Term) -> Self {
         unsafe fn recurse(
             var_binders: &mut HashMap<IStr, Vec<Tagged>>,
-            var_uses: &mut HashMap<(IStr, usize), Tagged>,
+            storage_ptr: *mut Tagged,
             term: &Term,
-        ) -> Tagged {
+        ) {
             match term {
-                Term::Var(name) => {
-                    if let Some(binders) = var_binders.get_mut(name) {
+                Term::Var(x) => {
+                    if let Some(binders) = var_binders.get_mut(x) {
                         let binder = binders.last().copied().unwrap();
-                        binder
+                        let binder_raw_ptr = match binder.tag() {
+                            Tag::LamBoundVar => binder.lam().x(),
+                            Tag::DupABoundVar => binder.dup().a(),
+                            Tag::DupBBoundVar => binder.dup().b(),
+                            _ => unreachable!(),
+                        };
+                        assert_eq!(binder_raw_ptr.read(), Tagged::new_unused_var());
+                        binder_raw_ptr.write(Tagged::new(storage_ptr as *mut (), Tag::VarUsePtr));
+                        storage_ptr.write(binder);
                     } else {
-                        Tagged::new_unbound_var()
+                        storage_ptr.write(Tagged::new_unbound_var());
                     }
                 }
-                Term::Lam(x_str, e_term) => do_lam(var_binders, var_uses, *x_str, e_term),
-                Term::App(e1_term, e2_term) => {
+                Term::Lam(x, e) => {
+                    let lam_ptr = Lam::alloc();
+                    lam_ptr.lam().x().write(Tagged::new_unused_var());
+                    var_binders
+                        .entry(*x)
+                        .or_default()
+                        .push(lam_ptr.lam_bound_var());
+                    recurse(var_binders, lam_ptr.lam().e(), e);
+                    var_binders.entry(*x).or_default().pop().unwrap();
+                    storage_ptr.write(lam_ptr);
+                }
+                Term::App(e1, e2) => {
                     let app_ptr = App::alloc();
-                    let e1 = recurse(var_binders, var_uses, e1_term);
-                    register_var_use(
-                        var_binders,
-                        var_uses,
-                        e1_term,
-                        e1,
-                        app_ptr.app_e1_var_use_ptr(),
-                    );
-                    let e2 = recurse(var_binders, var_uses, e2_term);
-                    register_var_use(
-                        var_binders,
-                        var_uses,
-                        e2_term,
-                        e2,
-                        app_ptr.app_e2_var_use_ptr(),
-                    );
-                    app_ptr.app().write(App { e1, e2 });
-                    app_ptr
+                    recurse(var_binders, app_ptr.app().e1(), e1);
+                    recurse(var_binders, app_ptr.app().e2(), e2);
+                    storage_ptr.write(app_ptr);
                 }
-                Term::Sup(l, e1_term, e2_term) => {
+                Term::Sup(l, e1, e2) => {
                     let sup_ptr = Sup::alloc();
-                    let e1 = recurse(var_binders, var_uses, e1_term);
-                    register_var_use(
-                        var_binders,
-                        var_uses,
-                        e1_term,
-                        e1,
-                        sup_ptr.sup_e1_var_use_ptr(),
-                    );
-                    let e2 = recurse(var_binders, var_uses, e2_term);
-                    register_var_use(
-                        var_binders,
-                        var_uses,
-                        e2_term,
-                        e2,
-                        sup_ptr.sup_e2_var_use_ptr(),
-                    );
-                    sup_ptr.sup().write(Sup { l: *l, e1, e2 });
-                    sup_ptr
+                    sup_ptr.sup().l().write(*l);
+                    recurse(var_binders, sup_ptr.sup().e1(), e1);
+                    recurse(var_binders, sup_ptr.sup().e2(), e2);
+                    storage_ptr.write(sup_ptr);
                 }
-                Term::Dup(l, a_str, b_str, e_term, cont_term) => {
+                Term::Dup(l, a, b, e, cont) => {
                     let dup_ptr = Dup::alloc();
-                    let a_scopes = var_binders.entry(*a_str).or_default();
-                    a_scopes.push(dup_ptr.dup_a_bound_var());
-                    let a_scope = a_scopes.len();
-                    let b_scopes = var_binders.entry(*b_str).or_default();
-                    b_scopes.push(dup_ptr.dup_b_bound_var());
-                    let b_scope = b_scopes.len();
-                    let e = recurse(var_binders, var_uses, e_term);
-                    register_var_use(
-                        var_binders,
-                        var_uses,
-                        e_term,
-                        e,
-                        dup_ptr.dup_e_var_use_ptr(),
+                    dup_ptr.dup().l().write(*l);
+                    assert_ne!(a, b);
+                    dup_ptr.dup().a().write(Tagged::new_unused_var());
+                    dup_ptr.dup().b().write(Tagged::new_unused_var());
+                    var_binders
+                        .entry(*a)
+                        .or_default()
+                        .push(dup_ptr.dup_a_bound_var());
+                    var_binders
+                        .entry(*b)
+                        .or_default()
+                        .push(dup_ptr.dup_b_bound_var());
+                    recurse(var_binders, dup_ptr.dup().e(), e);
+                    recurse(var_binders, storage_ptr, cont);
+                    var_binders.entry(*b).or_default().pop().unwrap();
+                    var_binders.entry(*a).or_default().pop().unwrap();
+                    assert!(
+                        dup_ptr.dup().a().read().tag() != Tag::UnusedVar
+                            || dup_ptr.dup().b().read().tag() != Tag::UnusedVar
                     );
-                    let cont = recurse(var_binders, var_uses, cont_term);
-                    register_var_use(
-                        var_binders,
-                        var_uses,
-                        cont_term,
-                        cont,
-                        dup_ptr.dup_e_var_use_ptr(),
-                    );
-                    let a = var_uses
-                        .get(&(*a_str, a_scope))
-                        .copied()
-                        .unwrap_or_else(|| Tagged::new_unused_var());
-                    let b = var_uses
-                        .get(&(*b_str, b_scope))
-                        .copied()
-                        .unwrap_or_else(|| Tagged::new_unused_var());
-                    assert!(a.tag() != Tag::UnusedVar || b.tag() != Tag::UnusedVar);
-                    dup_ptr.dup().write(Dup { l: *l, a, b, e });
-                    cont
                 }
                 Term::Let(x, e1_term, e2_term) => {
                     // let x = e1 in e2 => (λx e2) e1
                     let app_ptr = App::alloc();
-                    let e1 = recurse(var_binders, var_uses, e1_term);
-                    register_var_use(
-                        var_binders,
-                        var_uses,
-                        e1_term,
-                        e1,
-                        app_ptr.app_e2_var_use_ptr(),
-                    );
-                    let lam_ptr = do_lam(var_binders, var_uses, *x, e2_term);
-                    app_ptr.app().write(App {
-                        e1: lam_ptr,
-                        e2: e1,
-                    });
-                    app_ptr
+                    let lam_ptr = Lam::alloc();
+                    lam_ptr.lam().x().write(Tagged::new_unused_var());
+                    var_binders
+                        .entry(*x)
+                        .or_default()
+                        .push(lam_ptr.lam_bound_var());
+                    recurse(var_binders, app_ptr.app().e2(), e1_term);
+                    recurse(var_binders, lam_ptr.lam().e(), e2_term);
+                    var_binders.entry(*x).or_default().pop().unwrap();
+                    app_ptr.app().e1().write(lam_ptr);
+                    storage_ptr.write(app_ptr);
                 }
             }
         }
-        unsafe fn register_var_use(
-            var_binders: &mut HashMap<IStr, Vec<Tagged>>,
-            var_uses: &mut HashMap<(IStr, usize), Tagged>,
-            e_term: &Term,
-            e: Tagged,
-            var_use_ptr: Tagged,
-        ) {
-            if let Term::Var(v_str) = e_term {
-                if e.tag() != Tag::UnboundVar {
-                    let v_scope = var_binders.entry(*v_str).or_default().len();
-                    assert!(
-                        !var_uses.contains_key(&(*v_str, v_scope)),
-                        "non-affine usage"
-                    );
-                    var_uses.insert((*v_str, v_scope), var_use_ptr);
-                }
-            }
-        }
-        unsafe fn do_lam(
-            var_binders: &mut HashMap<IStr, Vec<Tagged>>,
-            var_uses: &mut HashMap<(IStr, usize), Tagged>,
-            x_str: IStr,
-            e_term: &Term,
-        ) -> Tagged {
-            let lam_ptr = Lam::alloc();
-            let x_scopes = var_binders.entry(x_str).or_default();
-            x_scopes.push(lam_ptr.lam_bound_var());
-            let x_scope = x_scopes.len();
-            let e = recurse(var_binders, var_uses, e_term);
-            let lam_e_var_use_ptr = lam_ptr.lam_e_var_use_ptr();
-            register_var_use(var_binders, var_uses, e_term, e, lam_e_var_use_ptr);
-            let x = var_uses
-                .get(&(x_str, x_scope))
-                .copied()
-                .unwrap_or_else(|| Tagged::new_unused_var());
-            lam_ptr.lam().write(Lam { x, e });
-            lam_ptr
-        }
+
         let var_binders = &mut HashMap::new();
-        let var_uses = &mut HashMap::new();
-        unsafe { TermGraph(recurse(var_binders, var_uses, term)) }
+        unsafe {
+            let root_ptr = std::alloc::alloc(std::alloc::Layout::new::<Tagged>()) as *mut Tagged;
+            root_ptr.write(Tagged::new_unbound_var());
+            recurse(var_binders, root_ptr, term);
+            TermGraph(root_ptr)
+        }
     }
 }
 
 impl TermGraph {
     pub fn naive_random_order_reduce(&mut self) {
         unsafe {
-            naive_random_order_reduce(addr_of_mut!(self.0));
+            naive_random_order_reduce(addr_of_mut!(*self.0));
         }
     }
 
     pub fn naive_reduce_step(&mut self) -> bool {
-        unsafe { naive_reduce_step(addr_of_mut!(self.0)) }
+        unsafe { naive_reduce_step(addr_of_mut!(*self.0)) }
     }
 }
 
@@ -1167,7 +1108,7 @@ mod test {
         );
         let term_graph = TermGraph::from(&term);
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::AppPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 2);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
@@ -1196,7 +1137,7 @@ mod test {
         );
         let term_graph = TermGraph::from(&term);
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::AppPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 2);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
@@ -1215,7 +1156,7 @@ mod test {
 
     #[test]
     fn test_app_dup_app_sup_from_term() {
-        // term = ((let #0{v1 v2} = v0; #0{v1 v2}) v3)
+        // term = ((dup #0{v1 v2} = v0; #0{v1 v2}) v3)
         let term = Term::App(
             Box::new(Term::Dup(
                 0,
@@ -1232,7 +1173,7 @@ mod test {
         );
         let term_graph = TermGraph::from(&term);
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::AppPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 3);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
@@ -1258,7 +1199,7 @@ mod test {
 
     #[test]
     fn test_dup_lam_dup_sup_from_term() {
-        // term = (let #0{v1 v2} = (λv0 v0); #0{v1 v2})
+        // term = (dup #0{v1 v2} = (λv0 v0); #0{v1 v2})
         let term = Term::Dup(
             0,
             "v1".into(),
@@ -1272,7 +1213,7 @@ mod test {
         );
         let term_graph = TermGraph::from(&term);
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::SupPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::SupPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 3);
             assert_eq!(nodes[0].tag(), Tag::SupPtr);
@@ -1298,7 +1239,7 @@ mod test {
 
     #[test]
     fn test_dup_dup_dup_sup_from_term() {
-        // term = (let #0{v1 v2} = (let #1{v3 v4} = v0; #1{v3 v4}); #0{v1 v2})
+        // term = (dup #0{v1 v2} = (let #1{v3 v4} = v0; #1{v3 v4}); #0{v1 v2})
         let term = Term::Dup(
             0,
             "v1".into(),
@@ -1322,7 +1263,7 @@ mod test {
         );
         let term_graph = TermGraph::from(&term);
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::SupPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::SupPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::SupPtr);
@@ -1356,7 +1297,7 @@ mod test {
 
     #[test]
     fn test_app_lam_dup_sup_lam_from_term() {
-        // term = ((λx let #0{x0 x1} = x; #0{x0 x1}) (λy. y))
+        // term = ((λx dup #0{x0 x1} = x; #0{x0 x1}) (λy. y))
         let term = Term::App(
             Box::new(Term::Lam(
                 "x".into(),
@@ -1376,7 +1317,7 @@ mod test {
         );
         let term_graph = TermGraph::from(&term);
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::AppPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 5);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
@@ -1426,7 +1367,7 @@ mod test {
         println!("After:\n{:?}", term_graph);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::UnboundVar);
+            assert_eq!(term_graph.0.read().tag(), Tag::UnboundVar);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 0);
         }
@@ -1451,7 +1392,7 @@ mod test {
         println!("After:\n{:?}", term_graph);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -1483,7 +1424,7 @@ mod test {
         println!("After:\n{:?}", term_graph);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::SupPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::SupPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::SupPtr);
@@ -1542,7 +1483,7 @@ mod test {
         println!("After:\n{:?}", term_graph);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 7);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -1614,7 +1555,7 @@ mod test {
         println!("After:\n{:?}", term_graph);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::SupPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::SupPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 5);
             assert_eq!(nodes[0].tag(), Tag::SupPtr);
@@ -1674,7 +1615,7 @@ mod test {
         let mut term_graph = TermGraph::from(&term);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -1707,7 +1648,7 @@ mod test {
         println!("After:\n{:?}", term_graph);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 5);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -1774,7 +1715,7 @@ mod test {
         unsafe {
             // dup #0{a b} = (λx (x y))
             // λy (a b)
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 5);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -1812,7 +1753,7 @@ mod test {
         unsafe {
             // dup #0{c d} = (#0{x1 x2} y)
             // λy ((λx1 c) (λx2 d))
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 7);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -1884,7 +1825,7 @@ mod test {
         let mut term_graph = TermGraph::from(&term);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 5);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -1922,7 +1863,7 @@ mod test {
         println!("After:\n{:?}", term_graph);
 
         unsafe {
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 3);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -1987,7 +1928,7 @@ mod test {
         unsafe {
             // dup #0{a b} = #1{x y}
             // λx λy (a b)
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 5);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -2027,7 +1968,7 @@ mod test {
             // dup #0{ax bx} = x
             // dup #0{ay by} = y
             // λx λy (#1{ax ay} #1{bx by})
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 7);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -2081,7 +2022,7 @@ mod test {
             // dup #0{ay by} = y
             // dup #1{bx0 by0} = #1{bx by}
             // λx λy #1{(ax bx0) (ay by0)}
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 9);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -2146,7 +2087,7 @@ mod test {
             // dup #0{ax bx} = x
             // dup #0{ay by} = y
             // λx λy #1{(ax bx) (ay by)}
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 7);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -2214,7 +2155,7 @@ mod test {
 
         unsafe {
             // (λa (b c)) d
-            assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::AppPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 3);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
@@ -2239,7 +2180,7 @@ mod test {
 
         unsafe {
             // (b c)
-            assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::AppPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].tag(), Tag::AppPtr);
@@ -2277,7 +2218,7 @@ mod test {
         unsafe {
             // dup #0{a b} = (λx y)
             // λy #0{z b}
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -2311,7 +2252,7 @@ mod test {
         unsafe {
             // dup #0{c d} = y
             // λy #0{z (λx2 d)}
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -2367,7 +2308,7 @@ mod test {
         unsafe {
             // dup #0{a b} = (λx y)
             // λy #0{a z}
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -2401,7 +2342,7 @@ mod test {
         unsafe {
             // dup #0{c d} = y
             // λy #0{(λx1 d) z}
-            assert_eq!(term_graph.0.tag(), Tag::LamPtr);
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 4);
             assert_eq!(nodes[0].tag(), Tag::LamPtr);
@@ -2428,5 +2369,57 @@ mod test {
             assert_eq!(dup.b, Tagged::new_unused_var());
             assert_eq!(dup.e, lam_y_ptr.lam_bound_var());
         }
+    }
+
+    #[test]
+    fn test_dup_sup_same_a_unused() {
+        // dup #0{a b} = #0{x y}
+        // λx b
+        // ---------------------- DupSupSame
+        // λx y
+        let term = Term::Lam(
+            "x".into(),
+            Box::new(Term::Dup(
+                0,
+                "a".into(),
+                "b".into(),
+                Box::new(Term::Sup(
+                    0,
+                    Box::new(Term::Var("x".into())),
+                    Box::new(Term::Var("y".into())),
+                )),
+                Box::new(Term::Var("b".into())),
+            )),
+        );
+        let mut term_graph = TermGraph::from(&term);
+        println!("Before:\n{:?}", term_graph);
+
+        unsafe {
+            // dup #0{a b} = #0{x y}
+            // λx b
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 3);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            assert_eq!(nodes[1].tag(), Tag::DupPtr);
+            assert_eq!(nodes[2].tag(), Tag::SupPtr);
+            let lam_x_ptr = nodes[0];
+            let dup_ptr = nodes[1];
+            let sup_ptr = nodes[2];
+            let lam_x = lam_x_ptr.lam_read();
+            let dup = dup_ptr.dup_read();
+            let sup = sup_ptr.sup_read();
+            assert_eq!(lam_x.x, sup_ptr.sup_e1_var_use_ptr());
+            assert_eq!(lam_x.e, dup_ptr.dup_b_bound_var());
+            assert_eq!(dup.l, 0);
+            assert_eq!(dup.a, Tagged::new_unused_var());
+            assert_eq!(dup.b, lam_x_ptr.lam_e_var_use_ptr());
+            assert_eq!(dup.e, sup_ptr);
+            assert_eq!(sup.l, 0);
+            assert_eq!(sup.e1, lam_x_ptr.lam_bound_var());
+            assert_eq!(sup.e2, Tagged::new_unbound_var());
+        }
+
+        // TODO: complete this test
     }
 }
