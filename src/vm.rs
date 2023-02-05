@@ -707,11 +707,8 @@ unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
     } else {
         Sup::alloc()
     };
-    let dup_c_d_ptr = if dup_a_b_a.tag() == Tag::UnusedVar && dup_a_b_b.tag() == Tag::UnusedVar {
-        Tagged::new_unbound_var()
-    } else {
-        Dup::alloc()
-    };
+    debug_assert!(dup_a_b_a.tag() != Tag::UnusedVar || dup_a_b_b.tag() != Tag::UnusedVar);
+    let dup_c_d_ptr = Dup::alloc();
 
     // a <- (λx1 c)
     if dup_a_b_a.tag() != Tag::UnusedVar {
@@ -746,14 +743,10 @@ unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
 
     // dup #l{c d} = e
     let e = lam_x_e_ptr.lam().e().read();
-    if dup_c_d_ptr.tag() == Tag::UnboundVar {
-        e.garbage_collect();
-    } else {
-        let c = lam_x1_c_ptr.lam_e_var_use_ptr();
-        let d = lam_x2_d_ptr.lam_e_var_use_ptr();
-        dup_c_d_ptr.dup().write(Dup { l, a: c, b: d, e });
-        e.if_bound_var_move_to(dup_c_d_ptr.dup_e_var_use_ptr());
-    }
+    let c = lam_x1_c_ptr.lam_e_var_use_ptr();
+    let d = lam_x2_d_ptr.lam_e_var_use_ptr();
+    dup_c_d_ptr.dup().write(Dup { l, a: c, b: d, e });
+    e.if_bound_var_move_to(dup_c_d_ptr.dup_e_var_use_ptr());
 
     // deallocate unreachable nodes
     dup_a_b_ptr.dealloc_dup();
@@ -770,6 +763,7 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
     let m = sup_e1_e2_ptr.sup().l().read();
     let dup_a_b_a = dup_a_b_ptr.dup().a().read();
     let dup_a_b_b = dup_a_b_ptr.dup().b().read();
+    debug_assert!(dup_a_b_a.tag() != Tag::UnusedVar || dup_a_b_b.tag() != Tag::UnusedVar);
 
     if l == m {
         // dup #l{a b} = #l{e1 e2}
@@ -806,71 +800,64 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
         // dup #l{a2 b2} = e2
         println!("DupSupDiff");
 
-        if dup_a_b_a.tag() == Tag::UnusedVar && dup_a_b_b.tag() == Tag::UnusedVar {
-            let e1 = sup_e1_e2_ptr.sup().e1().read();
-            e1.garbage_collect();
-            let e2 = sup_e1_e2_ptr.sup().e2().read();
-            e2.garbage_collect();
+        let sup_a1_a2_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
+            Tagged::new_unbound_var()
         } else {
-            let sup_a1_a2_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
-                Tagged::new_unbound_var()
-            } else {
-                Sup::alloc()
-            };
-            let sup_b1_b2_ptr = if dup_a_b_b.tag() == Tag::UnusedVar {
-                Tagged::new_unbound_var()
-            } else {
-                Sup::alloc()
-            };
-            let dup_a1_b1_ptr = Dup::alloc();
-            let dup_a2_b2_ptr = Dup::alloc();
+            Sup::alloc()
+        };
+        let sup_b1_b2_ptr = if dup_a_b_b.tag() == Tag::UnusedVar {
+            Tagged::new_unbound_var()
+        } else {
+            Sup::alloc()
+        };
+        let dup_a1_b1_ptr = Dup::alloc();
+        let dup_a2_b2_ptr = Dup::alloc();
 
-            // a <- #m{a1 a2}
-            if dup_a_b_a.tag() != Tag::UnusedVar {
-                debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
-                dup_a_b_a.var_use().write(sup_a1_a2_ptr);
-                let a1 = dup_a1_b1_ptr.dup_a_bound_var();
-                let a2 = dup_a2_b2_ptr.dup_a_bound_var();
-                sup_a1_a2_ptr.sup().write(Sup {
-                    l: m,
-                    e1: a1,
-                    e2: a2,
-                });
-            }
-
-            // b <- #m{b1 b2}
-            if dup_a_b_b.tag() != Tag::UnusedVar {
-                debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
-                dup_a_b_b.var_use().write(sup_b1_b2_ptr);
-                let b1 = dup_a1_b1_ptr.dup_b_bound_var();
-                let b2 = dup_a2_b2_ptr.dup_b_bound_var();
-                sup_b1_b2_ptr.sup().write(Sup {
-                    l: m,
-                    e1: b1,
-                    e2: b2,
-                });
-            }
-
-            // dup #l{a1 b1} = e1
-            let e1 = sup_e1_e2_ptr.sup().e1().read();
-            dup_a1_b1_ptr.dup().write(Dup {
-                l,
-                a: sup_a1_a2_ptr.sup_e1_var_use_ptr(),
-                b: sup_b1_b2_ptr.sup_e1_var_use_ptr(),
-                e: e1,
+        // a <- #m{a1 a2}
+        if dup_a_b_a.tag() != Tag::UnusedVar {
+            debug_assert_eq!(dup_a_b_a.var_use_read(), dup_a_b_ptr.dup_a_bound_var());
+            dup_a_b_a.var_use().write(sup_a1_a2_ptr);
+            let a1 = dup_a1_b1_ptr.dup_a_bound_var();
+            let a2 = dup_a2_b2_ptr.dup_a_bound_var();
+            sup_a1_a2_ptr.sup().write(Sup {
+                l: m,
+                e1: a1,
+                e2: a2,
             });
-            e1.if_bound_var_move_to(dup_a1_b1_ptr.dup_e_var_use_ptr());
-
-            // dup #l{a2 b2} = e2
-            let e2 = sup_e1_e2_ptr.sup().e2().read();
-            dup_a2_b2_ptr.dup().write(Dup {
-                l,
-                a: sup_a1_a2_ptr.sup_e2_var_use_ptr(),
-                b: sup_b1_b2_ptr.sup_e2_var_use_ptr(),
-                e: e2,
-            });
-            e2.if_bound_var_move_to(dup_a2_b2_ptr.dup_e_var_use_ptr());
         }
+
+        // b <- #m{b1 b2}
+        if dup_a_b_b.tag() != Tag::UnusedVar {
+            debug_assert_eq!(dup_a_b_b.var_use_read(), dup_a_b_ptr.dup_b_bound_var());
+            dup_a_b_b.var_use().write(sup_b1_b2_ptr);
+            let b1 = dup_a1_b1_ptr.dup_b_bound_var();
+            let b2 = dup_a2_b2_ptr.dup_b_bound_var();
+            sup_b1_b2_ptr.sup().write(Sup {
+                l: m,
+                e1: b1,
+                e2: b2,
+            });
+        }
+
+        // dup #l{a1 b1} = e1
+        let e1 = sup_e1_e2_ptr.sup().e1().read();
+        dup_a1_b1_ptr.dup().write(Dup {
+            l,
+            a: sup_a1_a2_ptr.sup_e1_var_use_ptr(),
+            b: sup_b1_b2_ptr.sup_e1_var_use_ptr(),
+            e: e1,
+        });
+        e1.if_bound_var_move_to(dup_a1_b1_ptr.dup_e_var_use_ptr());
+
+        // dup #l{a2 b2} = e2
+        let e2 = sup_e1_e2_ptr.sup().e2().read();
+        dup_a2_b2_ptr.dup().write(Dup {
+            l,
+            a: sup_a1_a2_ptr.sup_e2_var_use_ptr(),
+            b: sup_b1_b2_ptr.sup_e2_var_use_ptr(),
+            e: e2,
+        });
+        e2.if_bound_var_move_to(dup_a2_b2_ptr.dup_e_var_use_ptr());
     }
 
     // deallocate unreachable nodes
