@@ -2206,4 +2206,60 @@ mod test {
 
         assert!(!term_graph.naive_reduce_step());
     }
+
+    #[test]
+    fn test_app_let_app_var_unused() {
+        // (λa (b c)) d
+        // ------------ AppLam
+        // (b c)
+        let term = Term::App(
+            Box::new(Term::Lam(
+                "a".into(),
+                Box::new(Term::App(
+                    Box::new(Term::Var("b".into())),
+                    Box::new(Term::Var("c".into())),
+                )),
+            )),
+            Box::new(Term::Var("d".into())),
+        );
+        let mut term_graph = TermGraph::from(&term);
+        println!("Before:\n{:?}", term_graph);
+
+        unsafe {
+            // (λa (b c)) d
+            assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 3);
+            assert_eq!(nodes[0].tag(), Tag::AppPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::AppPtr);
+            let app_lam_d_ptr = nodes[0];
+            let lam_ptr = nodes[1];
+            let app_b_c_ptr = nodes[2];
+            let app_lam_d = app_lam_d_ptr.app_read();
+            let lam = lam_ptr.lam_read();
+            let app_b_c = app_b_c_ptr.app_read();
+            assert_eq!(app_lam_d.e1, lam_ptr);
+            assert_eq!(app_lam_d.e2, Tagged::new_unbound_var());
+            assert_eq!(lam.x, Tagged::new_unused_var());
+            assert_eq!(lam.e, app_b_c_ptr);
+            assert_eq!(app_b_c.e1, Tagged::new_unbound_var());
+            assert_eq!(app_b_c.e2, Tagged::new_unbound_var());
+        }
+
+        assert!(term_graph.naive_reduce_step());
+        println!("After:\n{:?}", term_graph);
+
+        unsafe {
+            // (b c)
+            assert_eq!(term_graph.0.tag(), Tag::AppPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(nodes[0].tag(), Tag::AppPtr);
+            let app_ptr = nodes[0];
+            let app = app_ptr.app_read();
+            assert_eq!(app.e1, Tagged::new_unbound_var());
+            assert_eq!(app.e2, Tagged::new_unbound_var());
+        }
+    }
 }
