@@ -2435,4 +2435,69 @@ mod test {
             assert_eq!(lam_x.e, Tagged::new_unbound_var());
         }
     }
+
+    #[test]
+    fn test_dup_sup_same_b_unused() {
+        // dup #0{a b} = #0{x y}
+        // λx a
+        // ---------------------- DupSupSame
+        // λx x
+        let term = Term::Lam(
+            "x".into(),
+            Box::new(Term::Dup(
+                0,
+                "a".into(),
+                "b".into(),
+                Box::new(Term::Sup(
+                    0,
+                    Box::new(Term::Var("x".into())),
+                    Box::new(Term::Var("y".into())),
+                )),
+                Box::new(Term::Var("a".into())),
+            )),
+        );
+        let mut term_graph = TermGraph::from(&term);
+        println!("Before:\n{:?}", term_graph);
+
+        unsafe {
+            // dup #0{a b} = #0{x y}
+            // λx a
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 3);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            assert_eq!(nodes[1].tag(), Tag::DupPtr);
+            assert_eq!(nodes[2].tag(), Tag::SupPtr);
+            let lam_x_ptr = nodes[0];
+            let dup_ptr = nodes[1];
+            let sup_ptr = nodes[2];
+            let lam_x = lam_x_ptr.lam_read();
+            let dup = dup_ptr.dup_read();
+            let sup = sup_ptr.sup_read();
+            assert_eq!(lam_x.x, sup_ptr.sup_e1_var_use_ptr());
+            assert_eq!(lam_x.e, dup_ptr.dup_a_bound_var());
+            assert_eq!(dup.l, 0);
+            assert_eq!(dup.a, lam_x_ptr.lam_e_var_use_ptr());
+            assert_eq!(dup.b, Tagged::new_unused_var());
+            assert_eq!(dup.e, sup_ptr);
+            assert_eq!(sup.l, 0);
+            assert_eq!(sup.e1, lam_x_ptr.lam_bound_var());
+            assert_eq!(sup.e2, Tagged::new_unbound_var());
+        }
+
+        assert!(term_graph.naive_reduce_step());
+        println!("After:\n{:?}", term_graph);
+
+        unsafe {
+            // λx x
+            assert_eq!(term_graph.0.read().tag(), Tag::LamPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(nodes[0].tag(), Tag::LamPtr);
+            let lam_x_ptr = nodes[0];
+            let lam_x = lam_x_ptr.lam_read();
+            assert_eq!(lam_x.x, lam_x_ptr.lam_e_var_use_ptr());
+            assert_eq!(lam_x.e, lam_x_ptr.lam_bound_var());
+        }
+    }
 }
