@@ -1007,98 +1007,109 @@ impl fmt::Debug for TermGraph {
 
 impl From<&Term> for TermGraph {
     fn from(term: &Term) -> Self {
-        unsafe fn recurse(
-            var_binders: &mut HashMap<IStr, Vec<Tagged>>,
-            storage_ptr: *mut Tagged,
-            term: &Term,
-        ) {
-            match term {
-                Term::Var(x) => {
-                    if let Some(binders) = var_binders.get_mut(x) {
-                        let binder = binders.last().copied().unwrap();
-                        let binder_raw_ptr = match binder.tag() {
-                            Tag::LamBoundVar => binder.lam().x(),
-                            Tag::DupABoundVar => binder.dup().a(),
-                            Tag::DupBBoundVar => binder.dup().b(),
-                            _ => unreachable!(),
-                        };
-                        assert_eq!(binder_raw_ptr.read(), Tagged::new_unused_var());
-                        binder_raw_ptr.write(Tagged::new(storage_ptr as *mut (), Tag::VarUsePtr));
-                        storage_ptr.write(binder);
-                    } else {
-                        storage_ptr.write(Tagged::new_unbound_var());
-                    }
-                }
-                Term::Lam(x, e) => {
-                    let lam_ptr = Lam::alloc();
-                    lam_ptr.lam().x().write(Tagged::new_unused_var());
-                    var_binders
-                        .entry(*x)
-                        .or_default()
-                        .push(lam_ptr.lam_bound_var());
-                    recurse(var_binders, lam_ptr.lam().e(), e);
-                    var_binders.entry(*x).or_default().pop().unwrap();
-                    storage_ptr.write(lam_ptr);
-                }
-                Term::App(e1, e2) => {
-                    let app_ptr = App::alloc();
-                    recurse(var_binders, app_ptr.app().e1(), e1);
-                    recurse(var_binders, app_ptr.app().e2(), e2);
-                    storage_ptr.write(app_ptr);
-                }
-                Term::Sup(l, e1, e2) => {
-                    let sup_ptr = Sup::alloc();
-                    sup_ptr.sup().l().write(*l);
-                    recurse(var_binders, sup_ptr.sup().e1(), e1);
-                    recurse(var_binders, sup_ptr.sup().e2(), e2);
-                    storage_ptr.write(sup_ptr);
-                }
-                Term::Dup(l, a, b, e, cont) => {
-                    let dup_ptr = Dup::alloc();
-                    dup_ptr.dup().l().write(*l);
-                    assert_ne!(a, b);
-                    dup_ptr.dup().a().write(Tagged::new_unused_var());
-                    dup_ptr.dup().b().write(Tagged::new_unused_var());
-                    var_binders
-                        .entry(*a)
-                        .or_default()
-                        .push(dup_ptr.dup_a_bound_var());
-                    var_binders
-                        .entry(*b)
-                        .or_default()
-                        .push(dup_ptr.dup_b_bound_var());
-                    recurse(var_binders, dup_ptr.dup().e(), e);
-                    recurse(var_binders, storage_ptr, cont);
-                    var_binders.entry(*b).or_default().pop().unwrap();
-                    var_binders.entry(*a).or_default().pop().unwrap();
-                    assert!(
-                        dup_ptr.dup().a().read().tag() != Tag::UnusedVar
-                            || dup_ptr.dup().b().read().tag() != Tag::UnusedVar
-                    );
-                }
-                Term::Let(x, e1_term, e2_term) => {
-                    // let x = e1 in e2 => (λx e2) e1
-                    let app_ptr = App::alloc();
-                    let lam_ptr = Lam::alloc();
-                    lam_ptr.lam().x().write(Tagged::new_unused_var());
-                    var_binders
-                        .entry(*x)
-                        .or_default()
-                        .push(lam_ptr.lam_bound_var());
-                    recurse(var_binders, app_ptr.app().e2(), e1_term);
-                    recurse(var_binders, lam_ptr.lam().e(), e2_term);
-                    var_binders.entry(*x).or_default().pop().unwrap();
-                    app_ptr.app().e1().write(lam_ptr);
-                    storage_ptr.write(app_ptr);
-                }
-            }
+        enum Task<'t> {
+            PopVarBinder(IStr),
+            Recurse(*mut Tagged, &'t Term),
         }
 
-        let var_binders = &mut HashMap::new();
+        let var_binders: &mut HashMap<IStr, Vec<Tagged>> = &mut HashMap::new();
+        let dup_ptrs = &mut vec![];
         unsafe {
             let root_ptr = std::alloc::alloc(std::alloc::Layout::new::<Tagged>()) as *mut Tagged;
             root_ptr.write(Tagged::new_unbound_var());
-            recurse(var_binders, root_ptr, term);
+            let stack = &mut vec![Task::Recurse(root_ptr, term)];
+            while let Some(task) = stack.pop() {
+                match task {
+                    Task::PopVarBinder(x) => {
+                        var_binders.entry(x).or_default().pop().unwrap();
+                    }
+                    Task::Recurse(storage_ptr, Term::Var(x)) => {
+                        if let Some(binders) = var_binders.get_mut(x) {
+                            let binder = binders.last().copied().unwrap();
+                            let binder_raw_ptr = match binder.tag() {
+                                Tag::LamBoundVar => binder.lam().x(),
+                                Tag::DupABoundVar => binder.dup().a(),
+                                Tag::DupBBoundVar => binder.dup().b(),
+                                _ => unreachable!(),
+                            };
+                            assert_eq!(binder_raw_ptr.read(), Tagged::new_unused_var());
+                            binder_raw_ptr
+                                .write(Tagged::new(storage_ptr as *mut (), Tag::VarUsePtr));
+                            storage_ptr.write(binder);
+                        } else {
+                            storage_ptr.write(Tagged::new_unbound_var());
+                        }
+                    }
+                    Task::Recurse(storage_ptr, Term::Lam(x, e)) => {
+                        let lam_ptr = Lam::alloc();
+                        lam_ptr.lam().x().write(Tagged::new_unused_var());
+                        storage_ptr.write(lam_ptr);
+                        var_binders
+                            .entry(*x)
+                            .or_default()
+                            .push(lam_ptr.lam_bound_var());
+                        stack.push(Task::PopVarBinder(*x));
+                        stack.push(Task::Recurse(lam_ptr.lam().e(), e));
+                    }
+                    Task::Recurse(storage_ptr, Term::App(e1, e2)) => {
+                        let app_ptr = App::alloc();
+                        storage_ptr.write(app_ptr);
+                        stack.push(Task::Recurse(app_ptr.app().e2(), e2));
+                        stack.push(Task::Recurse(app_ptr.app().e1(), e1));
+                    }
+                    Task::Recurse(storage_ptr, Term::Sup(l, e1, e2)) => {
+                        let sup_ptr = Sup::alloc();
+                        storage_ptr.write(sup_ptr);
+                        sup_ptr.sup().l().write(*l);
+                        stack.push(Task::Recurse(sup_ptr.sup().e2(), e2));
+                        stack.push(Task::Recurse(sup_ptr.sup().e1(), e1));
+                    }
+                    Task::Recurse(storage_ptr, Term::Dup(l, a, b, e, cont)) => {
+                        let dup_ptr = Dup::alloc();
+                        dup_ptrs.push(dup_ptr);
+                        dup_ptr.dup().l().write(*l);
+                        assert_ne!(a, b);
+                        dup_ptr.dup().a().write(Tagged::new_unused_var());
+                        dup_ptr.dup().b().write(Tagged::new_unused_var());
+                        var_binders
+                            .entry(*a)
+                            .or_default()
+                            .push(dup_ptr.dup_a_bound_var());
+                        stack.push(Task::PopVarBinder(*a));
+                        var_binders
+                            .entry(*b)
+                            .or_default()
+                            .push(dup_ptr.dup_b_bound_var());
+                        stack.push(Task::PopVarBinder(*b));
+                        stack.push(Task::Recurse(storage_ptr, cont));
+                        stack.push(Task::Recurse(dup_ptr.dup().e(), e));
+                    }
+                    Task::Recurse(storage_ptr, Term::Let(x, e1, e2)) => {
+                        // let x = e1 in e2 => (λx e2) e1
+                        let app_ptr = App::alloc();
+                        storage_ptr.write(app_ptr);
+                        let lam_ptr = Lam::alloc();
+                        app_ptr.app().e1().write(lam_ptr);
+                        lam_ptr.lam().x().write(Tagged::new_unused_var());
+                        var_binders
+                            .entry(*x)
+                            .or_default()
+                            .push(lam_ptr.lam_bound_var());
+                        stack.push(Task::PopVarBinder(*x));
+                        stack.push(Task::Recurse(lam_ptr.lam().e(), e2));
+                        stack.push(Task::Recurse(app_ptr.app().e2(), e1));
+                    }
+                }
+            }
+            // garbage collect unreachable dup's
+            for dup_ptr in dup_ptrs.iter().copied() {
+                if dup_ptr.dup().a().read().tag() == Tag::UnusedVar
+                    && dup_ptr.dup().b().read().tag() == Tag::UnusedVar
+                {
+                    dup_ptr.dup().e().read().garbage_collect();
+                    dup_ptr.dealloc_dup();
+                }
+            }
             TermGraph(root_ptr)
         }
     }
