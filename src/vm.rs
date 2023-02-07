@@ -508,13 +508,22 @@ unsafe fn naive_random_order_reduce(root_ptr_ptr: *mut Tagged) {
     }
 }
 
-unsafe fn naive_reduce_step(root_ptr_ptr: *mut Tagged) -> bool {
+unsafe fn naive_reduce_step(root_ptr_ptr: *mut Tagged) -> Option<Rule> {
     let redexes = collect_redexes(root_ptr_ptr);
     if redexes.is_empty() {
-        return false;
+        return None;
     }
-    reduce_redex(redexes.first().copied().unwrap());
-    true
+    let redex = redexes.first().copied().unwrap();
+    reduce_redex(redex);
+    Some(redex.into())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rule {
+    AppLam,
+    AppSup,
+    DupLam,
+    DupSup,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -537,6 +546,17 @@ enum Redex {
         dup_ptr: Tagged,
         sup_ptr: Tagged,
     },
+}
+
+impl From<Redex> for Rule {
+    fn from(redex: Redex) -> Self {
+        match redex {
+            Redex::AppLam { .. } => Rule::AppLam,
+            Redex::AppSup { .. } => Rule::AppSup,
+            Redex::DupLam { .. } => Rule::DupLam,
+            Redex::DupSup { .. } => Rule::DupSup,
+        }
+    }
 }
 
 unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<Redex> {
@@ -614,8 +634,6 @@ unsafe fn reduce_redex(redex: Redex) {
 }
 
 unsafe fn rule_app_lam(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
-    println!("rule_app_lam({:?}, {:?}, {:?})", ptr_ptr, app_ptr, lam_ptr);
-    println!("AppLam");
     // (λx e) e2
     // ---------- AppLam
     // x <- e2
@@ -643,8 +661,6 @@ unsafe fn rule_app_lam(ptr_ptr: *mut Tagged, app_ptr: Tagged, lam_ptr: Tagged) {
 }
 
 unsafe fn rule_app_sup(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
-    println!("rule_app_sup({:?}, {:?}, {:?})", ptr_ptr, app_ptr, sup_ptr);
-    println!("AppSup");
     // #l{e1 e2} e3
     // ----------------- AppSup
     // dup #l{a b} = e3
@@ -693,8 +709,6 @@ unsafe fn rule_app_sup(ptr_ptr: *mut Tagged, app_ptr: Tagged, sup_ptr: Tagged) {
 }
 
 unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
-    println!("rule_dup_lam({:?}, {:?})", dup_ptr, lam_ptr);
-    println!("DupLam");
     // dup #l{a b} = (λx e)
     // -------------------- DupLam
     // a <- (λx1 c)
@@ -772,8 +786,6 @@ unsafe fn rule_dup_lam(dup_ptr: Tagged, lam_ptr: Tagged) {
 }
 
 unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
-    println!("rule_dup_sup({:?}, {:?})", dup_ptr, sup_ptr);
-
     let dup_a_b_ptr = dup_ptr;
     let sup_e1_e2_ptr = sup_ptr;
 
@@ -788,7 +800,6 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
         // ----------------------- DupSupSame
         // a <- e1
         // b <- e2
-        println!("DupSupSame");
 
         // a <- e1
         let e1 = sup_e1_e2_ptr.sup().e1().read();
@@ -816,7 +827,6 @@ unsafe fn rule_dup_sup(dup_ptr: Tagged, sup_ptr: Tagged) {
         // b <- #m{b1 b2}
         // dup #l{a1 b1} = e1
         // dup #l{a2 b2} = e2
-        println!("DupSupDiff");
 
         let sup_a1_a2_ptr = if dup_a_b_a.tag() == Tag::UnusedVar {
             Tagged::new_unbound_var()
@@ -1101,7 +1111,7 @@ impl TermGraph {
         }
     }
 
-    pub fn naive_reduce_step(&mut self) -> bool {
+    pub fn naive_reduce_step(&mut self) -> Option<Rule> {
         unsafe { naive_reduce_step(addr_of_mut!(*self.0)) }
     }
 }
@@ -1424,7 +1434,7 @@ mod test {
             assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::AppLam));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -1831,7 +1841,7 @@ mod test {
             assert_eq!(app_x_y.e2, lam_y_ptr.lam_bound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupLam));
         println!("Step 1:\n{:?}", term_graph);
 
         unsafe {
@@ -2045,7 +2055,7 @@ mod test {
             assert_eq!(sup.e2, lam_y_ptr.lam_bound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupSup));
         println!("Step 1:\n{:?}", term_graph);
 
         unsafe {
@@ -2098,7 +2108,7 @@ mod test {
             assert_eq!(dup_y.e, lam_y_ptr.lam_bound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::AppSup));
         println!("Step 1:\n{:?}", term_graph);
 
         unsafe {
@@ -2164,7 +2174,7 @@ mod test {
             assert_eq!(sup_bx_by.e2, dup_ay_by_ptr.dup_b_bound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupSup));
         println!("Step 2:\n{:?}", term_graph);
 
         unsafe {
@@ -2216,7 +2226,7 @@ mod test {
             assert_eq!(dup_ay_by.e, lam_y_ptr.lam_bound_var());
         }
 
-        assert!(!term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), None);
     }
 
     #[test]
@@ -2259,7 +2269,7 @@ mod test {
             assert_eq!(app_b_c.e2, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::AppLam));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2330,7 +2340,7 @@ mod test {
             assert_eq!(lam_x.e, lam_y_ptr.lam_bound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupLam));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2420,7 +2430,7 @@ mod test {
             assert_eq!(lam_x.e, lam_y_ptr.lam_bound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupLam));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2504,7 +2514,7 @@ mod test {
             assert_eq!(sup.e2, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupSup));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2569,7 +2579,7 @@ mod test {
             assert_eq!(sup.e2, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupSup));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2636,7 +2646,7 @@ mod test {
             assert_eq!(sup.e2, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupSup));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2725,7 +2735,7 @@ mod test {
             assert_eq!(sup.e2, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::DupSup));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2767,7 +2777,7 @@ mod test {
     fn test_garbage_collect_dup_a_bound_var() {
         // dup #0{a b} = z
         // (λx y) a
-        // --------------- LamApp
+        // --------------- AppLam
         // y
         let term = Term::App(
             Box::new(Term::Lam("x".into(), Box::new(Term::Var("y".into())))),
@@ -2807,7 +2817,7 @@ mod test {
             assert_eq!(dup.e, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::AppLam));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2822,7 +2832,7 @@ mod test {
     fn test_garbage_collect_dup_b_bound_var() {
         // dup #0{a b} = z
         // (λx y) b
-        // --------------- LamApp
+        // --------------- AppLam
         // y
         let term = Term::App(
             Box::new(Term::Lam("x".into(), Box::new(Term::Var("y".into())))),
@@ -2862,7 +2872,7 @@ mod test {
             assert_eq!(dup.e, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::AppLam));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2877,7 +2887,7 @@ mod test {
     fn test_garbage_collect() {
         // dup #0{a b} = (λz #0{c d})
         // (λx y) (a b)
-        // -------------------------- LamApp
+        // -------------------------- AppLam
         // y
         let term = Term::App(
             Box::new(Term::Lam("x".into(), Box::new(Term::Var("y".into())))),
@@ -2944,7 +2954,7 @@ mod test {
             assert_eq!(sup.e2, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::AppLam));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
@@ -2959,7 +2969,7 @@ mod test {
     fn test_garbage_collect2() {
         // dup #0{a b} = (λz #0{c d})
         // (λx y) (b a)
-        // -------------------------- LamApp
+        // -------------------------- AppLam
         // y
         let term = Term::App(
             Box::new(Term::Lam("x".into(), Box::new(Term::Var("y".into())))),
@@ -3026,7 +3036,7 @@ mod test {
             assert_eq!(sup.e2, Tagged::new_unbound_var());
         }
 
-        assert!(term_graph.naive_reduce_step());
+        assert_eq!(term_graph.naive_reduce_step(), Some(Rule::AppLam));
         println!("After:\n{:?}", term_graph);
 
         unsafe {
