@@ -398,29 +398,45 @@ impl Tagged {
         Tagged::new(self.ptr(), Tag::DupBBoundVar)
     }
 
-    #[inline(always)]
     unsafe fn garbage_collect(self) {
-        match self.tag() {
-            Tag::UnboundVar => {}
-            Tag::LamBoundVar => self.lam().x().write(Tagged::new_unused_var()),
-            Tag::DupABoundVar => {
-                if self.dup().b().read().tag() == Tag::UnusedVar {
-                    self.dealloc_dup();
-                } else {
-                    self.dup().a().write(Tagged::new_unused_var());
+        let mut queue = VecDeque::new();
+        queue.push_back(self);
+        while let Some(ptr) = queue.pop_front() {
+            match ptr.tag() {
+                Tag::UnboundVar => {}
+                Tag::LamBoundVar => ptr.lam().x().write(Tagged::new_unused_var()),
+                Tag::DupABoundVar => {
+                    if ptr.dup().b().read().tag() == Tag::UnusedVar {
+                        queue.push_back(ptr.dup().e().read());
+                        ptr.dealloc_dup();
+                    } else {
+                        ptr.dup().a().write(Tagged::new_unused_var());
+                    }
                 }
-            }
-            Tag::DupBBoundVar => {
-                if self.dup().a().read().tag() == Tag::UnusedVar {
-                    self.dealloc_dup();
-                } else {
-                    self.dup().b().write(Tagged::new_unused_var());
+                Tag::DupBBoundVar => {
+                    if ptr.dup().a().read().tag() == Tag::UnusedVar {
+                        queue.push_back(ptr.dup().e().read());
+                        ptr.dealloc_dup();
+                    } else {
+                        ptr.dup().b().write(Tagged::new_unused_var());
+                    }
                 }
+                Tag::LamPtr => {
+                    queue.push_back(ptr.lam().e().read());
+                    ptr.dealloc_lam();
+                }
+                Tag::AppPtr => {
+                    queue.push_back(ptr.app().e1().read());
+                    queue.push_back(ptr.app().e2().read());
+                    ptr.dealloc_app();
+                },
+                Tag::SupPtr => {
+                    queue.push_back(ptr.sup().e1().read());
+                    queue.push_back(ptr.sup().e2().read());
+                    ptr.dealloc_sup();
+                }
+                _ => unreachable!(),
             }
-            Tag::LamPtr => self.dealloc_lam(),
-            Tag::AppPtr => self.dealloc_app(),
-            Tag::SupPtr => self.dealloc_sup(),
-            _ => unreachable!(),
         }
     }
 
