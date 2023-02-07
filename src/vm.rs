@@ -429,7 +429,7 @@ impl Tagged {
                     queue.push_back(ptr.app().e1().read());
                     queue.push_back(ptr.app().e2().read());
                     ptr.dealloc_app();
-                },
+                }
                 Tag::SupPtr => {
                     queue.push_back(ptr.sup().e1().read());
                     queue.push_back(ptr.sup().e2().read());
@@ -2770,10 +2770,7 @@ mod test {
         // --------------- LamApp
         // y
         let term = Term::App(
-            Box::new(Term::Lam(
-                "x".into(),
-                Box::new(Term::Var("y".into())),
-            )),
+            Box::new(Term::Lam("x".into(), Box::new(Term::Var("y".into())))),
             Box::new(Term::Dup(
                 0,
                 "a".into(),
@@ -2828,10 +2825,7 @@ mod test {
         // --------------- LamApp
         // y
         let term = Term::App(
-            Box::new(Term::Lam(
-                "x".into(),
-                Box::new(Term::Var("y".into())),
-            )),
+            Box::new(Term::Lam("x".into(), Box::new(Term::Var("y".into())))),
             Box::new(Term::Dup(
                 0,
                 "a".into(),
@@ -2886,10 +2880,7 @@ mod test {
         // -------------------------- LamApp
         // y
         let term = Term::App(
-            Box::new(Term::Lam(
-                "x".into(),
-                Box::new(Term::Var("y".into())),
-            )),
+            Box::new(Term::Lam("x".into(), Box::new(Term::Var("y".into())))),
             Box::new(Term::Dup(
                 0,
                 "a".into(),
@@ -2971,10 +2962,7 @@ mod test {
         // -------------------------- LamApp
         // y
         let term = Term::App(
-            Box::new(Term::Lam(
-                "x".into(),
-                Box::new(Term::Var("y".into())),
-            )),
+            Box::new(Term::Lam("x".into(), Box::new(Term::Var("y".into())))),
             Box::new(Term::Dup(
                 0,
                 "a".into(),
