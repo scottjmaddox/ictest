@@ -1352,6 +1352,47 @@ mod test {
     }
 
     #[test]
+    fn test_let_reduce() {
+        // let x = y; x  =>  (λx x) y
+        // -------------------------- AppLam
+        // y
+        let term = Term::Let(
+            "x".into(),
+            Box::new(Term::Var("y".into())),
+            Box::new(Term::Var("x".into())),
+        );
+        let mut term_graph = TermGraph::from(&term);
+        println!("Before:\n{:?}", term_graph);
+
+        unsafe {
+            // (λx x) y
+            assert_eq!(term_graph.0.read().tag(), Tag::AppPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 2);
+            assert_eq!(nodes[0].tag(), Tag::AppPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            let app_ptr = nodes[0];
+            let lam_ptr = nodes[1];
+            let app = app_ptr.app_read();
+            let lam = lam_ptr.lam_read();
+            assert_eq!(app.e1, lam_ptr);
+            assert_eq!(app.e2, Tagged::new_unbound_var());
+            assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
+            assert_eq!(lam.e, lam_ptr.lam_bound_var());
+        }
+
+        assert!(term_graph.naive_reduce_step());
+        println!("After:\n{:?}", term_graph);
+
+        unsafe {
+            // y
+            assert_eq!(term_graph.0.read().tag(), Tag::UnboundVar);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 0);
+        }
+    }
+
+    #[test]
     fn test_app_lam_var_reduce() {
         // ((λx. x) y)
         // ----------- AppLam
