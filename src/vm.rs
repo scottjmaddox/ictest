@@ -2691,4 +2691,62 @@ mod test {
             assert_eq!(dup_ay_by.e, Tagged::new_unbound_var());
         }
     }
+
+    #[test]
+    fn test_garbage_collect_dup_a_bound_var() {
+        // dup #0{a b} = z
+        // (λx y) a
+        // --------------- LamApp
+        // y
+        let term = Term::App(
+            Box::new(Term::Lam(
+                "x".into(),
+                Box::new(Term::Var("y".into())),
+            )),
+            Box::new(Term::Dup(
+                0,
+                "a".into(),
+                "b".into(),
+                Box::new(Term::Var("z".into())),
+                Box::new(Term::Var("a".into())),
+            )),
+        );
+        let mut term_graph = TermGraph::from(&term);
+        println!("Before:\n{:?}", term_graph);
+
+        unsafe {
+            // dup #0{a b} = z
+            // (λx y) a
+            assert_eq!(term_graph.0.read().tag(), Tag::AppPtr);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 3);
+            assert_eq!(nodes[0].tag(), Tag::AppPtr);
+            assert_eq!(nodes[1].tag(), Tag::LamPtr);
+            assert_eq!(nodes[2].tag(), Tag::DupPtr);
+            let app_ptr = nodes[0];
+            let lam_ptr = nodes[1];
+            let dup_ptr = nodes[2];
+            let app = app_ptr.app_read();
+            let lam = lam_ptr.lam_read();
+            let dup = dup_ptr.dup_read();
+            assert_eq!(app.e1, lam_ptr);
+            assert_eq!(app.e2, dup_ptr.dup_a_bound_var());
+            assert_eq!(lam.x, Tagged::new_unused_var());
+            assert_eq!(lam.e, Tagged::new_unbound_var());
+            assert_eq!(dup.l, 0);
+            assert_eq!(dup.a, app_ptr.app_e2_var_use_ptr());
+            assert_eq!(dup.b, Tagged::new_unused_var());
+            assert_eq!(dup.e, Tagged::new_unbound_var());
+        }
+
+        assert!(term_graph.naive_reduce_step());
+        println!("After:\n{:?}", term_graph);
+
+        unsafe {
+            // y
+            assert_eq!(term_graph.0.read().tag(), Tag::UnboundVar);
+            let nodes = term_graph.node_iter().collect::<Vec<_>>();
+            assert_eq!(nodes.len(), 0);
+        }
+    }
 }
