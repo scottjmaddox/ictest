@@ -517,7 +517,29 @@ unsafe fn naive_reduce_step(root_ptr_ptr: *mut Tagged) -> bool {
     true
 }
 
-unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
+#[derive(Debug, Clone, Copy)]
+enum Redex {
+    AppLam {
+        ptr_ptr: *mut Tagged,
+        app_ptr: Tagged,
+        lam_ptr: Tagged,
+    },
+    AppSup {
+        ptr_ptr: *mut Tagged,
+        app_ptr: Tagged,
+        sup_ptr: Tagged,
+    },
+    DupLam {
+        dup_ptr: Tagged,
+        lam_ptr: Tagged,
+    },
+    DupSup {
+        dup_ptr: Tagged,
+        sup_ptr: Tagged,
+    },
+}
+
+unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<Redex> {
     let mut visited = HashSet::new();
     let mut redexes = Vec::new();
     let mut stack = vec![root_ptr_ptr];
@@ -533,9 +555,18 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
                 stack.push(ptr.lam().e());
             }
             Tag::AppPtr => {
-                match ptr.app().e1().read().tag() {
-                    Tag::LamPtr => redexes.push(ptr_ptr),
-                    Tag::SupPtr => redexes.push(ptr_ptr),
+                let e1 = ptr.app().e1().read();
+                match e1.tag() {
+                    Tag::LamPtr => redexes.push(Redex::AppLam {
+                        ptr_ptr,
+                        app_ptr: ptr,
+                        lam_ptr: e1,
+                    }),
+                    Tag::SupPtr => redexes.push(Redex::AppSup {
+                        ptr_ptr,
+                        app_ptr: ptr,
+                        sup_ptr: e1,
+                    }),
                     _ => {}
                 }
                 stack.push(ptr.app().e1());
@@ -546,9 +577,16 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
                 stack.push(ptr.sup().e2());
             }
             Tag::DupABoundVar | Tag::DupBBoundVar | Tag::DupPtr => {
-                match ptr.dup().e().read().tag() {
-                    Tag::LamPtr => redexes.push(ptr_ptr),
-                    Tag::SupPtr => redexes.push(ptr_ptr),
+                let e = ptr.dup().e().read();
+                match e.tag() {
+                    Tag::LamPtr => redexes.push(Redex::DupLam {
+                        dup_ptr: ptr,
+                        lam_ptr: e,
+                    }),
+                    Tag::SupPtr => redexes.push(Redex::DupSup {
+                        dup_ptr: ptr,
+                        sup_ptr: e,
+                    }),
                     _ => {}
                 }
                 stack.push(ptr.dup().e());
@@ -558,28 +596,20 @@ unsafe fn collect_redexes(root_ptr_ptr: *mut Tagged) -> Vec<*mut Tagged> {
     redexes
 }
 
-unsafe fn reduce_redex(ptr_ptr: *mut Tagged) {
-    let ptr = ptr_ptr.read();
-    match ptr.tag() {
-        Tag::AppPtr => {
-            let app_ptr = ptr;
-            let app_e1 = app_ptr.app().e1().read();
-            match app_e1.tag() {
-                Tag::LamPtr => rule_app_lam(ptr_ptr, app_ptr, app_e1),
-                Tag::SupPtr => rule_app_sup(ptr_ptr, app_ptr, app_e1),
-                _ => unreachable!(),
-            }
-        }
-        Tag::DupABoundVar | Tag::DupBBoundVar | Tag::DupPtr => {
-            let dup_ptr = ptr;
-            let dup_e = dup_ptr.dup().e().read();
-            match dup_e.tag() {
-                Tag::LamPtr => rule_dup_lam(dup_ptr, dup_e),
-                Tag::SupPtr => rule_dup_sup(dup_ptr, dup_e),
-                _ => unreachable!(),
-            }
-        }
-        _ => unreachable!(),
+unsafe fn reduce_redex(redex: Redex) {
+    match redex {
+        Redex::AppLam {
+            ptr_ptr,
+            app_ptr,
+            lam_ptr,
+        } => rule_app_lam(ptr_ptr, app_ptr, lam_ptr),
+        Redex::AppSup {
+            ptr_ptr,
+            app_ptr,
+            sup_ptr,
+        } => rule_app_sup(ptr_ptr, app_ptr, sup_ptr),
+        Redex::DupLam { dup_ptr, lam_ptr } => rule_dup_lam(dup_ptr, lam_ptr),
+        Redex::DupSup { dup_ptr, sup_ptr } => rule_dup_sup(dup_ptr, sup_ptr),
     }
 }
 
