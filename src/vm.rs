@@ -404,15 +404,17 @@ impl Tagged {
             Tag::UnboundVar => {}
             Tag::LamBoundVar => self.lam().x().write(Tagged::new_unused_var()),
             Tag::DupABoundVar => {
-                self.dup().a().write(Tagged::new_unused_var());
                 if self.dup().b().read().tag() == Tag::UnusedVar {
                     self.dealloc_dup();
+                } else {
+                    self.dup().a().write(Tagged::new_unused_var());
                 }
             }
             Tag::DupBBoundVar => {
-                self.dup().b().write(Tagged::new_unused_var());
                 if self.dup().a().read().tag() == Tag::UnusedVar {
                     self.dealloc_dup();
+                } else {
+                    self.dup().b().write(Tagged::new_unused_var());
                 }
             }
             Tag::LamPtr => self.dealloc_lam(),
