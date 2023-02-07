@@ -936,16 +936,14 @@ impl fmt::Debug for Tagged {
 }
 
 #[allow(dead_code)]
-fn print_graph(ptr: Tagged) {
+unsafe fn print_graph(ptr: Tagged) {
     for ptr in NodeIter::new(ptr) {
         print!("{:?}", ptr.ptr());
-        unsafe {
-            match ptr.node_type() {
-                NodeType::Lam => println!(" {:?}", ptr.lam_read()),
-                NodeType::App => println!(" {:?}", ptr.app_read()),
-                NodeType::Sup => println!(" {:?}", ptr.sup_read()),
-                NodeType::Dup => println!(" {:?}", ptr.dup_read()),
-            }
+        match ptr.node_type() {
+            NodeType::Lam => println!(" {:?}", ptr.lam_read()),
+            NodeType::App => println!(" {:?}", ptr.app_read()),
+            NodeType::Sup => println!(" {:?}", ptr.sup_read()),
+            NodeType::Dup => println!(" {:?}", ptr.dup_read()),
         }
     }
 }
@@ -1085,6 +1083,33 @@ mod test {
     #[test]
     fn empty_test() {
         // Empty test used as a baseline for memory leak detection.
+    }
+
+    #[test]
+    fn test_print_graph() {
+        // dup #0{a b} = z;
+        // (λx #0{a b}) y
+        let term = Term::App(
+            Box::new(Term::Lam(
+                "x".into(),
+                Box::new(Term::Dup(
+                    0,
+                    "a".into(),
+                    "b".into(),
+                    Box::new(Term::Var("z".into())),
+                    Box::new(Term::Sup(
+                        0,
+                        Box::new(Term::Var("a".into())),
+                        Box::new(Term::Var("b".into())),
+                    )),
+                )),
+            )),
+            Box::new(Term::Var("y".into())),
+        );
+        let term_graph = TermGraph::from(&term);
+        unsafe {
+            print_graph(*term_graph.0);
+        }
     }
 
     #[test]
