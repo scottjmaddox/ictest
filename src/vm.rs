@@ -435,7 +435,7 @@ impl Tagged {
                     queue.push_back(ptr.sup().e2().read());
                     ptr.dealloc_sup();
                 }
-                _ => unreachable!(),
+                _ => unreachable!("{:?}", ptr.tag()),
             }
         }
     }
@@ -917,7 +917,7 @@ impl Iterator for NodeIter {
                 }
                 self.visited.insert(ptr);
                 match ptr.tag() {
-                    Tag::UnusedVar | Tag::VarUsePtr => unreachable!(),
+                    Tag::UnusedVar | Tag::VarUsePtr => unreachable!("{:?}", ptr.tag()),
                     Tag::UnboundVar | Tag::LamBoundVar => {}
                     Tag::DupABoundVar | Tag::DupBBoundVar => {
                         self.queue.push_front(Tagged::new(ptr.ptr(), Tag::DupPtr));
@@ -951,12 +951,94 @@ impl Iterator for NodeIter {
     }
 }
 
+struct TaggedIter {
+    visited: HashSet<Tagged>,
+    queue: VecDeque<Tagged>,
+}
+
+impl TaggedIter {
+    fn new(ptr: Tagged) -> Self {
+        let visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(ptr);
+        Self { visited, queue }
+    }
+}
+
+impl Iterator for TaggedIter {
+    type Item = Tagged;
+    fn next(&mut self) -> Option<Self::Item> {
+        unsafe {
+            while let Some(ptr) = self.queue.pop_front() {
+                let tag = ptr.tag();
+                if self.visited.contains(&ptr) && tag != Tag::UnusedVar && tag != Tag::UnboundVar {
+                    continue;
+                }
+                self.visited.insert(ptr);
+                match tag {
+                    Tag::UnusedVar | Tag::VarUsePtr | Tag::UnboundVar | Tag::LamBoundVar => {
+                        return Some(ptr);
+                    }
+                    Tag::DupABoundVar | Tag::DupBBoundVar => {
+                        self.queue.push_front(Tagged::new(ptr.ptr(), Tag::DupPtr));
+                        return Some(ptr);
+                    }
+                    Tag::LamPtr => {
+                        self.queue.push_back(ptr.lam().x().read());
+                        self.queue.push_back(ptr.lam().e().read());
+                        return Some(ptr);
+                    }
+                    Tag::AppPtr => {
+                        self.queue.push_back(ptr.app().e1().read());
+                        self.queue.push_back(ptr.app().e2().read());
+                        return Some(ptr);
+                    }
+                    Tag::SupPtr => {
+                        self.queue.push_back(ptr.sup().e1().read());
+                        self.queue.push_back(ptr.sup().e2().read());
+                        return Some(ptr);
+                    }
+                    Tag::DupPtr => {
+                        self.queue.push_back(ptr.dup().a().read());
+                        self.queue.push_back(ptr.dup().b().read());
+                        self.queue.push_back(ptr.dup().e().read());
+                        // NOTE: DupPtr's aren't actually in the graph,
+                        //       so we don't return them.
+                        continue;
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 /// An owned term graph.
 pub struct TermGraph(*mut Tagged);
 
 impl TermGraph {
+    // TODO: rename to `iter_nodes`
     fn node_iter(&self) -> NodeIter {
         NodeIter::new(unsafe { self.0.read() })
+    }
+
+    fn iter_taggeds(&self) -> TaggedIter {
+        TaggedIter::new(unsafe { self.0.read() })
+    }
+
+    fn count_vars(&self) -> usize {
+        let mut count = 0;
+        unsafe {
+            for ptr in self.iter_taggeds() {
+                match ptr.tag() {
+                    Tag::UnboundVar | Tag::LamBoundVar | Tag::DupABoundVar | Tag::DupBBoundVar => {
+                        count += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        count
     }
 }
 
@@ -1030,7 +1112,7 @@ impl From<&Term> for TermGraph {
                                 Tag::LamBoundVar => binder.lam().x(),
                                 Tag::DupABoundVar => binder.dup().a(),
                                 Tag::DupBBoundVar => binder.dup().b(),
-                                _ => unreachable!(),
+                                _ => unreachable!("{:?}", binder.tag()),
                             };
                             assert_eq!(binder_raw_ptr.read(), Tagged::new_unused_var());
                             binder_raw_ptr
@@ -1126,16 +1208,12 @@ impl From<&TermGraph> for Term {
             BuildDup(u64, Tagged, Tagged),
             BuildLet(Tagged),
         }
-        let mut next_var: u64 = 0;
-        let unused = "_".intern_static();
-        let mut get_var = |tag: Tag| {
-            if tag == Tag::UnusedVar {
-                return unused;
-            } else {
-                let var = next_var;
-                next_var += 1;
-                format!("v{}", var).intern()
-            }
+        let unused_var = "_".intern_static();
+        let mut vars_remaining = graph.count_vars();
+        let mut fresh_var = || {
+            let v = vars_remaining;
+            vars_remaining -= 1;
+            format!("v{}", v).intern()
         };
         // vars maps from a (Lam|DupA|DupB)BoundVar to the variable's IStr:
         let mut vars: HashMap<Tagged, IStr> = HashMap::new();
@@ -1153,7 +1231,6 @@ impl From<&TermGraph> for Term {
         unsafe {
             let mut tasks = vec![Task::Visit(graph.0.read())];
             while let Some(task) = tasks.pop() {
-                debug_assert_eq!(terms.len(), double_use_dups_var_tracker.len());
                 match task {
                     Task::Visit(ptr) => {
                         match ptr.tag() {
@@ -1179,10 +1256,11 @@ impl From<&TermGraph> for Term {
                             Tag::AppPtr => {
                                 let e1 = ptr.app().e1().read();
                                 if e1.tag() == Tag::LamPtr {
-                                    // If e1 is a LamPtr, then build a Term::Let
+                                    // If e1 is a LamPtr, then build a `Term::Let`.
+                                    // ((λx e1) e2) => (let x = e2; e1)
                                     tasks.push(Task::BuildLet(e1.lam_bound_var()));
-                                    tasks.push(Task::Visit(e1.lam().e().read()));
                                     tasks.push(Task::Visit(ptr.app().e2().read()));
+                                    tasks.push(Task::Visit(e1.lam().e().read()));
                                 } else {
                                     tasks.push(Task::BuildApp);
                                     tasks.push(Task::Visit(e1));
@@ -1194,34 +1272,43 @@ impl From<&TermGraph> for Term {
                                 tasks.push(Task::Visit(ptr.sup().e1().read()));
                                 tasks.push(Task::Visit(ptr.sup().e2().read()));
                             }
-                            _ => unreachable!(),
+                            _ => unreachable!("{:?}", ptr.tag()),
                         }
                     }
                     Task::BuildVar(ptr) => {
-                        let v = get_var(ptr.tag());
-                        vars.insert(ptr, v);
-                        terms.push(Term::Var(v));
-                        if ptr.tag() == Tag::DupABoundVar || ptr.tag() == Tag::DupBBoundVar {
-                            if single_use_dups.remove(&ptr.dup()) {
-                                tasks.push(Task::BuildDup(
-                                    ptr.dup().l().read(),
-                                    ptr.dup().a().read(),
-                                    ptr.dup().b().read(),
-                                ));
+                        match ptr.tag() {
+                            Tag::UnboundVar | Tag::LamBoundVar => {
+                                let v = fresh_var();
+                                vars.insert(ptr, v);
+                                terms.push(Term::Var(v));
                                 double_use_dups_var_tracker.push(HashMap::new());
-                            } else {
-                                let mut tmp = HashMap::new();
-                                tmp.insert(ptr.dup(), 1);
-                                double_use_dups_var_tracker.push(tmp);
                             }
-                        } else {
-                            double_use_dups_var_tracker.push(HashMap::new());
-                        }
+                            Tag::DupABoundVar | Tag::DupBBoundVar => {
+                                let v = fresh_var();
+                                vars.insert(ptr, v);
+                                terms.push(Term::Var(v));
+                                double_use_dups_var_tracker.push(HashMap::new());
+                                if single_use_dups.remove(&ptr.dup()) {
+                                    tasks.push(Task::BuildDup(
+                                        ptr.dup().l().read(),
+                                        ptr.dup_a_bound_var(),
+                                        ptr.dup_b_bound_var(),
+                                    ));
+                                } else {
+                                    double_use_dups_var_tracker
+                                        .last_mut()
+                                        .unwrap()
+                                        .insert(ptr.dup(), 1);
+                                }
+                            }
+                            _ => unreachable!("{:?}", ptr.tag()),
+                        };
                     }
                     Task::BuildLam(lam_bound_var) => {
-                        let x = vars.remove(&lam_bound_var).unwrap();
+                        let x = vars.remove(&lam_bound_var).unwrap_or(unused_var);
                         let e = terms.pop().unwrap();
                         terms.push(Term::Lam(x, Box::new(e)));
+                        // NOTE: double_use_dups_var_tracker is unaffected
                     }
                     Task::BuildApp => {
                         let e1 = terms.pop().unwrap();
@@ -1236,36 +1323,38 @@ impl From<&TermGraph> for Term {
                         merge_top_two(&mut double_use_dups_var_tracker);
                     }
                     Task::BuildDup(l, dup_a_bound_var, dup_b_bound_var) => {
-                        let a = vars.remove(&dup_a_bound_var).unwrap();
-                        let b = vars.remove(&dup_b_bound_var).unwrap();
+                        let a = vars.remove(&dup_a_bound_var).unwrap_or(unused_var);
+                        let b = vars.remove(&dup_b_bound_var).unwrap_or(unused_var);
                         let e = terms.pop().unwrap();
                         let cont = terms.pop().unwrap();
                         terms.push(Term::Dup(l, a, b, Box::new(e), Box::new(cont)));
+                        merge_top_two(&mut double_use_dups_var_tracker);
                     }
                     Task::BuildLet(lam_bound_var) => {
-                        // (λx e2) e1 => let x = e1 in e2
-                        let x = vars.remove(&lam_bound_var).unwrap();
+                        // ((λx e1) e2) => (let x = e2; e1)
+                        let x = vars.remove(&lam_bound_var).unwrap_or(unused_var);
                         let e2 = terms.pop().unwrap();
                         let e1 = terms.pop().unwrap();
-                        terms.push(Term::Let(x, Box::new(e1), Box::new(e2)));
+                        terms.push(Term::Let(x, Box::new(e2), Box::new(e1)));
                         merge_top_two(&mut double_use_dups_var_tracker);
                     }
                 }
-                // check if any dups are ready to be built.
+                debug_assert_eq!(terms.len(), double_use_dups_var_tracker.len());
+                // check if any double-use dups are ready to be built
                 if let Some(top) = double_use_dups_var_tracker.last_mut() {
-                    let dups_to_create: Vec<*mut Dup> = top
+                    let dups_to_build: Vec<*mut Dup> = top
                         .iter()
                         .filter_map(|(dup, count)| if *count == 2 { Some(*dup) } else { None })
                         .collect();
-                    for dup in dups_to_create {
+                    for dup in dups_to_build {
                         top.remove(&dup);
                         tasks.push(Task::BuildDup(
                             dup.l().read(),
-                            dup.a().read(),
-                            dup.b().read(),
+                            Tagged::new(dup as *mut (), Tag::DupABoundVar),
+                            Tagged::new(dup as *mut (), Tag::DupBBoundVar),
                         ));
                         tasks.push(Task::Visit(dup.e().read()));
-                        // the top of `terms` already contains the continuation
+                        // Note: the top of `terms` already contains the continuation
                     }
                 }
             }
@@ -1347,19 +1436,12 @@ mod test {
             assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
 
-        // ((λx. x) y) => let v1 = v0 in v1
-        assert_eq!(
-            Term::from(&term_graph),
-            Term::Let(
-                "v1".into(),
-                Box::new(Term::Var("v0".into())),
-                Box::new(Term::Var("v1".into())),
-            )
-        );
+        // ((λx. x) y) => (let v2 = v1 in v2)
+        assert_eq!(format!("{}", Term::from(&term_graph)), "(let v2 = v1; v2)");
     }
 
     #[test]
-    fn test_app_sup_from_term() {
+    fn test_app_sup_from_term_to_term() {
         // (#0{x0 x1} y)
         let term = Term::App(
             Box::new(Term::Sup(
@@ -1387,36 +1469,26 @@ mod test {
             assert_eq!(sup.e2.tag(), Tag::UnboundVar);
         }
 
-        // (#0{x0 x1} y) => (#0{v2 v1} v0)
-        assert_eq!(
-            Term::from(&term_graph),
-            Term::App(
-                Box::new(Term::Sup(
-                    0,
-                    Box::new(Term::Var("v2".into())),
-                    Box::new(Term::Var("v1".into())),
-                )),
-                Box::new(Term::Var("v0".into())),
-            )
-        );
+        // (#0{x0 x1} y) => (#0{v1 v2} v3)
+        assert_eq!(format!("{}", Term::from(&term_graph)), "(#0{v1 v2} v3)");
     }
 
     #[test]
-    fn test_app_dup_app_sup_from_term() {
-        // term = ((dup #0{v1 v2} = v0; #0{v1 v2}) v3)
+    fn test_app_dup_app_sup_from_term_to_term() {
+        // ((dup #0{v2 v3} = v1; #0{v2 v3}) v4)
         let term = Term::App(
             Box::new(Term::Dup(
                 0,
-                "v1".into(),
                 "v2".into(),
-                Box::new(Term::Var("v0".into())),
+                "v3".into(),
+                Box::new(Term::Var("v1".into())),
                 Box::new(Term::Sup(
                     0,
-                    Box::new(Term::Var("v1".into())),
                     Box::new(Term::Var("v2".into())),
+                    Box::new(Term::Var("v3".into())),
                 )),
             )),
-            Box::new(Term::Var("v3".into())),
+            Box::new(Term::Var("v4".into())),
         );
         let term_graph = TermGraph::from(&term);
         unsafe {
@@ -1442,20 +1514,25 @@ mod test {
             assert_eq!(dup.b, sup_ptr.sup_e2_var_use_ptr());
             assert_eq!(dup.e, Tagged::new_unbound_var());
         }
+
+        assert_eq!(
+            format!("{}", Term::from(&term_graph)),
+            "((dup #0{v2 v3} = v1; #0{v2 v3}) v4)"
+        );
     }
 
     #[test]
-    fn test_dup_lam_dup_sup_from_term() {
-        // term = (dup #0{v1 v2} = (λv0 v0); #0{v1 v2})
+    fn test_dup_lam_dup_sup_from_term_to_term() {
+        // (dup #0{v2 v3} = (λv1 v1); #0{v2 v3})
         let term = Term::Dup(
             0,
-            "v1".into(),
             "v2".into(),
-            Box::new(Term::Lam("v0".into(), Box::new(Term::Var("v0".into())))),
+            "v3".into(),
+            Box::new(Term::Lam("v1".into(), Box::new(Term::Var("v1".into())))),
             Box::new(Term::Sup(
                 0,
-                Box::new(Term::Var("v1".into())),
                 Box::new(Term::Var("v2".into())),
+                Box::new(Term::Var("v3".into())),
             )),
         );
         let term_graph = TermGraph::from(&term);
@@ -1482,30 +1559,35 @@ mod test {
             assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
             assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
+
+        assert_eq!(
+            format!("{}", Term::from(&term_graph)),
+            "(dup #0{v2 v3} = (λv1 v1); #0{v2 v3})"
+        );
     }
 
     #[test]
-    fn test_dup_dup_dup_sup_from_term() {
-        // term = (dup #0{v1 v2} = (let #1{v3 v4} = v0; #1{v3 v4}); #0{v1 v2})
+    fn test_dup_dup_dup_sup_from_term_to_term() {
+        // (dup #0{v4 v5} = (dup #1{v2 v3} = v1; #1{v2 v3}); #0{v4 v5})
         let term = Term::Dup(
             0,
-            "v1".into(),
-            "v2".into(),
+            "v4".into(),
+            "v5".into(),
             Box::new(Term::Dup(
                 1,
+                "v2".into(),
                 "v3".into(),
-                "v4".into(),
-                Box::new(Term::Var("v0".into())),
+                Box::new(Term::Var("v1".into())),
                 Box::new(Term::Sup(
                     1,
+                    Box::new(Term::Var("v2".into())),
                     Box::new(Term::Var("v3".into())),
-                    Box::new(Term::Var("v4".into())),
                 )),
             )),
             Box::new(Term::Sup(
                 0,
-                Box::new(Term::Var("v1".into())),
-                Box::new(Term::Var("v2".into())),
+                Box::new(Term::Var("v4".into())),
+                Box::new(Term::Var("v5".into())),
             )),
         );
         let term_graph = TermGraph::from(&term);
@@ -1540,11 +1622,16 @@ mod test {
             assert_eq!(dup_v3_v4.b, sup_v3_v4_ptr.sup_e2_var_use_ptr());
             assert_eq!(dup_v3_v4.e, Tagged::new_unbound_var());
         }
+
+        assert_eq!(
+            format!("{}", Term::from(&term_graph)),
+            "(dup #0{v4 v5} = (dup #1{v2 v3} = v1; #1{v2 v3}); #0{v4 v5})"
+        );
     }
 
     #[test]
     fn test_app_lam_dup_sup_lam_from_term() {
-        // term = ((λx dup #0{x0 x1} = x; #0{x0 x1}) (λy. y))
+        // ((λx (dup #0{x0 x1} = x; #0{x0 x1})) (λy. y))
         let term = Term::App(
             Box::new(Term::Lam(
                 "x".into(),
@@ -1596,6 +1683,13 @@ mod test {
             assert_eq!(dup.b, sup_ptr.sup_e2_var_use_ptr());
             assert_eq!(dup.e, lam_x_ptr.lam_bound_var());
         }
+
+        // ((λx dup #0{x0 x1} = x; #0{x0 x1}) (λy. y))
+        // => (let v2 = (λv1 v1); (dup #0{v3 v4} = v2; #0{v3 v4}))
+        assert_eq!(
+            format!("{}", Term::from(&term_graph)),
+            "(let v2 = (λv1 v1); (dup #0{v3 v4} = v2; #0{v3 v4}))"
+        );
     }
 
     #[test]
@@ -1628,6 +1722,8 @@ mod test {
             assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
 
+        assert_eq!(format!("{}", Term::from(&term_graph)), "(let v2 = v1; v2)");
+
         assert_eq!(term_graph.naive_reduce_step(), Some(Rule::AppLam));
         println!("After:\n{:?}", term_graph);
 
@@ -1637,6 +1733,8 @@ mod test {
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 0);
         }
+
+        assert_eq!(format!("{}", Term::from(&term_graph)), "v1");
     }
 
     #[test]
@@ -1650,6 +1748,8 @@ mod test {
         );
         let mut term_graph = TermGraph::from(&term);
 
+        assert_eq!(format!("{}", Term::from(&term_graph)), "(let v2 = v1; v2)");
+
         println!("Before:\n{:?}", term_graph);
         term_graph.naive_random_order_reduce();
         println!("After:\n{:?}", term_graph);
@@ -1659,6 +1759,8 @@ mod test {
             let nodes = term_graph.node_iter().collect::<Vec<_>>();
             assert_eq!(nodes.len(), 0);
         }
+
+        assert_eq!(format!("{}", Term::from(&term_graph)), "v1");
     }
 
     #[test]
@@ -1675,6 +1777,12 @@ mod test {
         );
         let mut term_graph = TermGraph::from(&term);
 
+        // (λy ((λx x) y)) => (λv1 (let v2 = v1; v2))
+        assert_eq!(
+            format!("{}", Term::from(&term_graph)),
+            "(λv1 (let v2 = v1; v2))"
+        );
+
         println!("Before:\n{:?}", term_graph);
         term_graph.naive_random_order_reduce();
         println!("After:\n{:?}", term_graph);
@@ -1689,6 +1797,9 @@ mod test {
             assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
             assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
+
+        // (λy y) => (λv1 v1)
+        assert_eq!(format!("{}", Term::from(&term_graph)), "(λv1 v1)");
     }
 
     #[test]

@@ -27,9 +27,9 @@ impl fmt::Display for Term {
             Term::App(fun, arg) => write!(f, "({} {})", fun, arg),
             Term::Sup(label, left, right) => write!(f, "#{}{{{} {}}}", label, left, right),
             Term::Dup(label, x, y, dup, body) => {
-                write!(f, "dup #{}{{{} {}}} = {}; {}", label, x, y, dup, body)
+                write!(f, "(dup #{}{{{} {}}} = {}; {})", label, x, y, dup, body)
             }
-            Term::Let(x, expr, body) => write!(f, "let {} = {}; {}", x, expr, body),
+            Term::Let(x, expr, body) => write!(f, "(let {} = {}; {})", x, expr, body),
         }
     }
 }
@@ -62,11 +62,11 @@ mod test {
             ),
             (
                 Term::Dup(0, x, y, Box::new(Term::Var(z)), Box::new(Term::Var(body))),
-                "dup #0{x y} = z; body",
+                "(dup #0{x y} = z; body)",
             ),
             (
                 Term::Let(x, Box::new(Term::Var(expr)), Box::new(Term::Var(body))),
-                "let x = expr; body",
+                "(let x = expr; body)",
             ),
         ];
         for (term, expected) in test_cases {
