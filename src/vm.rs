@@ -4,7 +4,7 @@ use std::mem::{align_of, size_of};
 use std::ptr::addr_of_mut;
 use std::{fmt, ptr};
 
-use crate::intern::IStr;
+use crate::intern::{IStr, Intern, InternStatic};
 use crate::syntax::Term;
 
 /// A lambda node, e.g. `(λx e)`.
@@ -1115,6 +1115,166 @@ impl From<&Term> for TermGraph {
     }
 }
 
+impl From<&TermGraph> for Term {
+    fn from(graph: &TermGraph) -> Self {
+        enum Task {
+            Visit(Tagged),
+            BuildVar(Tagged),
+            BuildLam(Tagged),
+            BuildApp,
+            BuildSup(u64),
+            BuildDup(u64, Tagged, Tagged),
+            BuildLet(Tagged),
+        }
+        let mut next_var: u64 = 0;
+        let unused = "_".intern_static();
+        let mut get_var = |tag: Tag| {
+            if tag == Tag::UnusedVar {
+                return unused;
+            } else {
+                let var = next_var;
+                next_var += 1;
+                format!("v{}", var).intern()
+            }
+        };
+        // vars maps from a (Lam|DupA|DupB)BoundVar to the variable's IStr:
+        let mut vars: HashMap<Tagged, IStr> = HashMap::new();
+        let mut terms: Vec<Term> = vec![];
+        // used to idenity where in `terms`, the double-use Dup's vars are:
+        let mut double_use_dups_var_tracker: Vec<HashMap<*mut Dup, usize>> = vec![];
+        let mut single_use_dups: HashSet<*mut Dup> = HashSet::new();
+        fn merge_top_two(double_use_dups_var_tracker: &mut Vec<HashMap<*mut Dup, usize>>) {
+            let tmp = double_use_dups_var_tracker.pop().unwrap();
+            let map = double_use_dups_var_tracker.last_mut().unwrap();
+            for (dup, count) in tmp {
+                *map.entry(dup).or_insert(0) += count;
+            }
+        }
+        unsafe {
+            let mut tasks = vec![Task::Visit(graph.0.read())];
+            while let Some(task) = tasks.pop() {
+                debug_assert_eq!(terms.len(), double_use_dups_var_tracker.len());
+                match task {
+                    Task::Visit(ptr) => {
+                        match ptr.tag() {
+                            Tag::UnboundVar | Tag::LamBoundVar => {
+                                tasks.push(Task::BuildVar(ptr));
+                            }
+                            Tag::DupABoundVar => {
+                                tasks.push(Task::BuildVar(ptr));
+                                if ptr.dup().b().read().tag() == Tag::UnusedVar {
+                                    single_use_dups.insert(ptr.dup());
+                                }
+                            }
+                            Tag::DupBBoundVar => {
+                                tasks.push(Task::BuildVar(ptr));
+                                if ptr.dup().a().read().tag() == Tag::UnusedVar {
+                                    single_use_dups.insert(ptr.dup());
+                                }
+                            }
+                            Tag::LamPtr => {
+                                tasks.push(Task::BuildLam(ptr.lam_bound_var()));
+                                tasks.push(Task::Visit(ptr.lam().e().read()));
+                            }
+                            Tag::AppPtr => {
+                                let e1 = ptr.app().e1().read();
+                                if e1.tag() == Tag::LamPtr {
+                                    // If e1 is a LamPtr, then build a Term::Let
+                                    tasks.push(Task::BuildLet(e1.lam_bound_var()));
+                                    tasks.push(Task::Visit(e1.lam().e().read()));
+                                    tasks.push(Task::Visit(ptr.app().e2().read()));
+                                } else {
+                                    tasks.push(Task::BuildApp);
+                                    tasks.push(Task::Visit(e1));
+                                    tasks.push(Task::Visit(ptr.app().e2().read()));
+                                }
+                            }
+                            Tag::SupPtr => {
+                                tasks.push(Task::BuildSup(ptr.sup().l().read()));
+                                tasks.push(Task::Visit(ptr.sup().e1().read()));
+                                tasks.push(Task::Visit(ptr.sup().e2().read()));
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    Task::BuildVar(ptr) => {
+                        let v = get_var(ptr.tag());
+                        vars.insert(ptr, v);
+                        terms.push(Term::Var(v));
+                        if ptr.tag() == Tag::DupABoundVar || ptr.tag() == Tag::DupBBoundVar {
+                            if single_use_dups.remove(&ptr.dup()) {
+                                tasks.push(Task::BuildDup(
+                                    ptr.dup().l().read(),
+                                    ptr.dup().a().read(),
+                                    ptr.dup().b().read(),
+                                ));
+                                double_use_dups_var_tracker.push(HashMap::new());
+                            } else {
+                                let mut tmp = HashMap::new();
+                                tmp.insert(ptr.dup(), 1);
+                                double_use_dups_var_tracker.push(tmp);
+                            }
+                        } else {
+                            double_use_dups_var_tracker.push(HashMap::new());
+                        }
+                    }
+                    Task::BuildLam(lam_bound_var) => {
+                        let x = vars.remove(&lam_bound_var).unwrap();
+                        let e = terms.pop().unwrap();
+                        terms.push(Term::Lam(x, Box::new(e)));
+                    }
+                    Task::BuildApp => {
+                        let e1 = terms.pop().unwrap();
+                        let e2 = terms.pop().unwrap();
+                        terms.push(Term::App(Box::new(e1), Box::new(e2)));
+                        merge_top_two(&mut double_use_dups_var_tracker);
+                    }
+                    Task::BuildSup(l) => {
+                        let e1 = terms.pop().unwrap();
+                        let e2 = terms.pop().unwrap();
+                        terms.push(Term::Sup(l, Box::new(e1), Box::new(e2)));
+                        merge_top_two(&mut double_use_dups_var_tracker);
+                    }
+                    Task::BuildDup(l, dup_a_bound_var, dup_b_bound_var) => {
+                        let a = vars.remove(&dup_a_bound_var).unwrap();
+                        let b = vars.remove(&dup_b_bound_var).unwrap();
+                        let e = terms.pop().unwrap();
+                        let cont = terms.pop().unwrap();
+                        terms.push(Term::Dup(l, a, b, Box::new(e), Box::new(cont)));
+                    }
+                    Task::BuildLet(lam_bound_var) => {
+                        // (λx e2) e1 => let x = e1 in e2
+                        let x = vars.remove(&lam_bound_var).unwrap();
+                        let e2 = terms.pop().unwrap();
+                        let e1 = terms.pop().unwrap();
+                        terms.push(Term::Let(x, Box::new(e1), Box::new(e2)));
+                        merge_top_two(&mut double_use_dups_var_tracker);
+                    }
+                }
+                // check if any dups are ready to be built.
+                if let Some(top) = double_use_dups_var_tracker.last_mut() {
+                    let dups_to_create: Vec<*mut Dup> = top
+                        .iter()
+                        .filter_map(|(dup, count)| if *count == 2 { Some(*dup) } else { None })
+                        .collect();
+                    for dup in dups_to_create {
+                        top.remove(&dup);
+                        tasks.push(Task::BuildDup(
+                            dup.l().read(),
+                            dup.a().read(),
+                            dup.b().read(),
+                        ));
+                        tasks.push(Task::Visit(dup.e().read()));
+                        // the top of `terms` already contains the continuation
+                    }
+                }
+            }
+        }
+        assert_eq!(terms.len(), 1);
+        terms.pop().unwrap()
+    }
+}
+
 impl TermGraph {
     pub fn naive_random_order_reduce(&mut self) {
         unsafe {
@@ -1164,8 +1324,8 @@ mod test {
     }
 
     #[test]
-    fn test_app_lam_from_term() {
-        // term = ((λx. x) y)
+    fn test_app_lam_from_term_to_term() {
+        // ((λx. x) y)
         let term = Term::App(
             Box::new(Term::Lam("x".into(), Box::new(Term::Var("x".into())))),
             Box::new(Term::Var("y".into())),
@@ -1186,11 +1346,21 @@ mod test {
             assert_eq!(lam.x, lam_ptr.lam_e_var_use_ptr());
             assert_eq!(lam.e, lam_ptr.lam_bound_var());
         }
+
+        // ((λx. x) y) => let v1 = v0 in v1
+        assert_eq!(
+            Term::from(&term_graph),
+            Term::Let(
+                "v1".into(),
+                Box::new(Term::Var("v0".into())),
+                Box::new(Term::Var("v1".into())),
+            )
+        );
     }
 
     #[test]
     fn test_app_sup_from_term() {
-        // term = (#0{x0 x1} y)
+        // (#0{x0 x1} y)
         let term = Term::App(
             Box::new(Term::Sup(
                 0,
@@ -1216,6 +1386,19 @@ mod test {
             assert_eq!(sup.e1.tag(), Tag::UnboundVar);
             assert_eq!(sup.e2.tag(), Tag::UnboundVar);
         }
+
+        // (#0{x0 x1} y) => (#0{v2 v1} v0)
+        assert_eq!(
+            Term::from(&term_graph),
+            Term::App(
+                Box::new(Term::Sup(
+                    0,
+                    Box::new(Term::Var("v2".into())),
+                    Box::new(Term::Var("v1".into())),
+                )),
+                Box::new(Term::Var("v0".into())),
+            )
+        );
     }
 
     #[test]
