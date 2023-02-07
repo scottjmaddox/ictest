@@ -18,7 +18,7 @@ rustup component add llvm-tools-preview
 Measure test coverage:
 
 ```sh
-CARGO_INCREMENTAL=0 RUSTFLAGS='-Cinstrument-coverage' LLVM_PROFILE_FILE='cargo-test-vm-%p-%m.profraw' cargo test vm
+CARGO_INCREMENTAL=0 RUSTFLAGS='-Cinstrument-coverage' LLVM_PROFILE_FILE='cargo-test-vm-%p-%m.profraw' cargo test
 ```
 
 Generate and view the html report:
