@@ -329,22 +329,12 @@ impl Tagged {
 
     #[inline(always)]
     unsafe fn app_e1_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnboundVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-            Tagged::new_unused_var()
-        } else {
-            Tagged::new(self.app().e1() as *mut (), Tag::VarUsePtr)
-        }
+        Tagged::new(self.app().e1() as *mut (), Tag::VarUsePtr)
     }
 
     #[inline(always)]
     unsafe fn app_e2_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnboundVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-            Tagged::new_unused_var()
-        } else {
-            Tagged::new(self.app().e2() as *mut (), Tag::VarUsePtr)
-        }
+        Tagged::new(self.app().e2() as *mut (), Tag::VarUsePtr)
     }
 
     #[inline(always)]
@@ -369,12 +359,7 @@ impl Tagged {
 
     #[inline(always)]
     unsafe fn dup_e_var_use_ptr(self) -> Tagged {
-        if self.tag() == Tag::UnboundVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-            Tagged::new_unused_var()
-        } else {
-            Tagged::new(self.dup().e() as *mut (), Tag::VarUsePtr)
-        }
+        Tagged::new(self.dup().e() as *mut (), Tag::VarUsePtr)
     }
 
     #[inline(always)]
@@ -389,43 +374,28 @@ impl Tagged {
 
     #[inline(always)]
     unsafe fn lam_bound_var(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-            Tagged::new_unbound_var()
-        } else {
-            debug_assert!(self.tag() == Tag::LamPtr || self.tag() == Tag::LamBoundVar);
-            Tagged::new(self.ptr(), Tag::LamBoundVar)
-        }
+        debug_assert!(self.tag() == Tag::LamPtr || self.tag() == Tag::LamBoundVar);
+        Tagged::new(self.ptr(), Tag::LamBoundVar)
     }
 
     #[inline(always)]
     unsafe fn dup_a_bound_var(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-            Tagged::new_unbound_var()
-        } else {
-            debug_assert!(
-                self.tag() == Tag::DupPtr
-                    || self.tag() == Tag::DupABoundVar
-                    || self.tag() == Tag::DupBBoundVar
-            );
-            Tagged::new(self.ptr(), Tag::DupABoundVar)
-        }
+        debug_assert!(
+            self.tag() == Tag::DupPtr
+                || self.tag() == Tag::DupABoundVar
+                || self.tag() == Tag::DupBBoundVar
+        );
+        Tagged::new(self.ptr(), Tag::DupABoundVar)
     }
 
     #[inline(always)]
     unsafe fn dup_b_bound_var(self) -> Tagged {
-        if self.tag() == Tag::UnusedVar {
-            debug_assert_eq!(self.ptr(), ptr::null_mut());
-            Tagged::new_unbound_var()
-        } else {
-            debug_assert!(
-                self.tag() == Tag::DupPtr
-                    || self.tag() == Tag::DupABoundVar
-                    || self.tag() == Tag::DupBBoundVar
-            );
-            Tagged::new(self.ptr(), Tag::DupBBoundVar)
-        }
+        debug_assert!(
+            self.tag() == Tag::DupPtr
+                || self.tag() == Tag::DupABoundVar
+                || self.tag() == Tag::DupBBoundVar
+        );
+        Tagged::new(self.ptr(), Tag::DupBBoundVar)
     }
 
     #[inline(always)]
