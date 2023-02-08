@@ -1413,6 +1413,21 @@ mod test {
     }
 
     #[test]
+    fn test_round_trip() {
+        let cases = [
+            "(dup #0{v2 v3} = v1; (v2 v3))",
+            "(dup #0{v2 v4} = v1; ((v2 v3) (v4 v5)))",
+        ];
+        for src1 in cases {
+            let term1 = src1.parse().unwrap();
+            let term_graph = TermGraph::from(&term1);
+            let term2 = Term::from(&term_graph);
+            let src2 = format!("{}", term2);
+            assert_eq!(src1, src2.as_str());
+        }
+    }
+
+    #[test]
     fn test_app_lam_from_term_to_term() {
         // ((λx. x) y)
         let term = Term::App(

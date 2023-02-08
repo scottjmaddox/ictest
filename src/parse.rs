@@ -23,6 +23,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::str::FromStr;
+
 use crate::intern::Intern;
 use crate::parser;
 use crate::syntax::{Label, Term};
@@ -175,6 +177,20 @@ pub fn parse_term(state: parser::State) -> parser::Answer<Box<Term>> {
         ],
         state,
     )
+}
+
+impl FromStr for Term {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (state, term) = parse_term(parser::State::new(s))?;
+        let (state, is_done) = parser::done(state).unwrap();
+        if !is_done {
+            Err(format!("unexpected input: {}", &s[state.index..]))
+        } else {
+            Ok(*term)
+        }
+    }
 }
 
 #[cfg(test)]
